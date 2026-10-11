@@ -20,7 +20,7 @@
 | 認証 | Cognito（管理画面のスタッフのみ） | 自前で認証を作らない |
 | メール | SES | 安い。お客様への送信は管理者の確認後のみ（定型の受付通知を除く。INV-6）。管理者への新しい申込の通知にも使う |
 | 定期実行 | EventBridge Scheduler → Lambda | Googleカレンダーの取り込み（1日1回）。常時起動しない（INV-8） |
-| 外部連携 | Google Calendar API（読み取りのみ） | 並行稼働の間の予約の取り込み。認証情報は SSM Parameter Store（SecureString）に置く（INV-8）。GCPで別の仕組みを作らず、AWSとTerraformにまとめる |
+| 外部連携 | Google Calendar API（v1は読み取りのみ。書き込みはv1のあと） | 並行稼働の間の予約の取り込み。認証情報は SSM Parameter Store（SecureString）に置く（INV-8）。GCPで別の仕組みを作らず、AWSとTerraformにまとめる |
 | スキーマ・契約 | Zod（packages/contracts） | API・ウィジェット・管理画面で同じ型を使う |
 | IaC | Terraform。stateはS3（`use_lockfile` でロック） | ロック用のDynamoDBテーブルが不要 |
 | パッケージ管理 | pnpm workspaces | モノレポの標準的な構成 |
