@@ -18,7 +18,9 @@
 | APIの入口 | API Gateway HTTP API | REST APIより安い。JWT認証に対応 |
 | DB | DynamoDB（オンデマンド） | 使った分だけの課金。予約件数が少ないので安い |
 | 認証 | Cognito（管理画面のスタッフのみ） | 自前で認証を作らない |
-| メール | SES | 安い。送信は管理者の確認後のみ |
+| メール | SES | 安い。お客様への送信は管理者の確認後のみ（定型の受付通知を除く。INV-6）。管理者への新しい申込の通知にも使う |
+| 定期実行 | EventBridge Scheduler → Lambda | Googleカレンダーの取り込み（1日1回）。常時起動しない（INV-8） |
+| 外部連携 | Google Calendar API（読み取りのみ） | 並行稼働の間の予約の取り込み。認証情報は SSM Parameter Store（SecureString）に置く（INV-8）。GCPで別の仕組みを作らず、AWSとTerraformにまとめる |
 | スキーマ・契約 | Zod（packages/contracts） | API・ウィジェット・管理画面で同じ型を使う |
 | IaC | Terraform。stateはS3（`use_lockfile` でロック） | ロック用のDynamoDBテーブルが不要 |
 | パッケージ管理 | pnpm workspaces | モノレポの標準的な構成 |
@@ -40,8 +42,9 @@ RDBの制約のようには防げないため、アプリ側で保証する。
 
 ## 時刻で起きる処理
 
-仮予約は本予約の境界（利用日の7日前の18:00）に自動で本予約になり、通知の下書きを作る（[booking.md](product-specs/booking.md)）。
-このため、時刻をきっかけに動く処理が必要。仕組み（EventBridge Scheduler など）は骨組みを作るときに決める。常時起動のリソースは使わない（INV-8）。
+予約の状態を時刻で自動的に変える処理はない（仮予約の昇格・取消は管理者が手で行う。[booking.md](product-specs/booking.md)）。
+期限切れなどの警告は、管理画面の表示時に計算する。
+定期実行するのは、Googleカレンダーの取り込みだけ（[index.md](product-specs/index.md)）。取り込みも、ブロック枠の作成・更新・削除と枠の確保・解放を1トランザクションで行う（INV-2）。
 
 キー設計の詳細は、骨組みを作るときに design-docs に書く。キー設計の変更は自律度「低」。
 
