@@ -117,7 +117,7 @@ AWS Budgetsで月額のアラートを設定する。
 |---|---|
 | プルリクエスト | lint、型チェック、テスト一式、dev の `terraform plan`、仕様の例の節がテストにあるかの確認、テストと実装の同時変更の確認（[TESTING.md](TESTING.md)） |
 | main へのマージ | dev への `terraform apply` とアプリのデプロイ |
-| 人間がリリースタグを付ける | prod へのアプリのデプロイ。prod の `terraform plan` |
+| 人間がリリースタグ（`v*`。例：`v1.0.0`）を付ける | prod へのアプリのデプロイ。prod の `terraform plan` |
 | prod の `terraform apply` | CI では実行しない。人間が plan の結果を確認して手元から実行する |
 
 理由：本番に出るタイミングを人間が決められる。
