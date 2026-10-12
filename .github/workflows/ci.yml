@@ -104,3 +104,17 @@ jobs:
         run: pnpm db:up
       - name: 統合テスト
         run: pnpm test:int
+
+  expected-failures:
+    name: expected-failures
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: ローカルの DynamoDB を起動（統合テストが失敗予定リストにある場合のため）
+        run: pnpm db:up
+      - name: 失敗予定リストのテストが、まだ失敗するか（TESTING.md）
+        run: pnpm expected-failures

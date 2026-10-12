@@ -14,26 +14,29 @@
 
 デザインの方向性（docs/DESIGN.md）は未決定。UIは決定まで最小限の見た目で実装する。
 
-## リポジトリ構成（予定）
+## リポジトリ構成
 
 ```
-apps/site-zebra/      HP（Astro）
-apps/admin/           予約管理画面
-apps/api/             予約API
-packages/contracts/   公開APIのスキーマ（Zod）
+apps/site-zebra/          HP（Astro）
+apps/admin/               管理画面（React + Vite）
+apps/api/                 予約API（Hono。ローカルは Node サーバー、本番は Lambda）
+packages/contracts/       公開APIのスキーマ（Zod）
 packages/booking-core/    予約のルール（入出力を持たない純粋な関数）
 packages/booking-widget/  HP埋め込み用カレンダー
 packages/clock/           現在時刻の部品（INV-7）
-infra/                Terraform
-docs/                 仕様・設計・計画
+tooling/                  共通の設定（TypeScript、ESLint）
+scripts/harness/          CI の独自チェック、エージェントのガード
+harness/                  CI のチェックが読む設定（自律度のパス、例の網羅の保留リスト、失敗予定リスト）
+.claude/                  Claude Code の権限設定と、エージェントの定義（test-writer、implementer）
+docs/                     仕様・設計・計画
 ```
 
-詳細は [docs/exec-plans/skeleton-and-ci.md](docs/exec-plans/skeleton-and-ci.md)。骨組み作成後、このセクションを実際の構成に合わせて更新すること。
+インフラ（`infra/`、Terraform）は、AWS の準備ができてから追加する。手元での動かし方は [README.md](README.md)。
 
 ## 作業ルール
 
 - 不変条件（core-beliefs.md の INV-*）に関わる変更は、必ずテストを伴う
-- 自律度「中」の領域では、テストを先に仕様から書き、実装PRではテストを変更しない（TESTING.md）
+- 自律度「中」の領域では、テストを先に仕様から書き、実装PRではテストを変更しない（TESTING.md）。テストは `test-writer`、実装は `implementer` のエージェント（`.claude/agents/`）に任せる
 - 自律度「低」の領域は、変更を提案するだけで実行しない
 - 仕様が曖昧なときは推測で実装しない。product-specs の「未決事項」に追記し、PRで人間に質問する
 - 作業中に詰まったこと、足りなかったもの（ドキュメント、lint、ツール）は [docs/harness-log.md](docs/harness-log.md) に記録する

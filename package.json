@@ -22,7 +22,8 @@
     "build": "pnpm -r --if-present build",
     "dev:site": "pnpm --filter @zebra/site-zebra dev",
     "dev:admin": "pnpm --filter @zebra/admin dev",
-    "dev:api": "pnpm --filter @zebra/api dev"
+    "dev:api": "pnpm --filter @zebra/api dev",
+    "expected-failures": "node scripts/harness/src/expected-failures-cli.ts"
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "3.1141.0",

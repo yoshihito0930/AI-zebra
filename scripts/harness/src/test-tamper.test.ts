@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { checkTamper, classify } from "./test-tamper.ts";
+import { type Change, checkTamper, classify, parseNameStatus } from "./test-tamper.ts";
 
 const config = {
   medium: ["packages/booking-core/src/**", "packages/contracts/src/**", "apps/api/src/public/**"],
 };
+const A = (path: string): Change => ({ status: "A", path });
+const M = (path: string): Change => ({ status: "M", path });
+const D = (path: string): Change => ({ status: "D", path });
+
+const TEST = "packages/booking-core/src/availability.test.ts";
+const IMPL = "packages/booking-core/src/availability.ts";
 
 describe("PRで変更されたファイルを分類する", () => {
   it.each([
@@ -21,70 +27,63 @@ describe("PRで変更されたファイルを分類する", () => {
   });
 });
 
-describe("自律度「中」のテストと実装の同時変更を見つける", () => {
-  it("自律度「中」の領域のテストだけ → 成功（テストのPR。人間がレビュー）", () => {
-    expect(checkTamper(["packages/booking-core/src/availability.test.ts"], config)).toEqual({
-      ok: true,
-    });
+describe("git diff --name-status を読む", () => {
+  it("追加・変更・削除・種類の変更を読む", () => {
+    expect(parseNameStatus("A\ta.ts\nM\tb.ts\nD\tc.ts\nT\td.ts\n")).toEqual([
+      A("a.ts"),
+      M("b.ts"),
+      D("c.ts"),
+      M("d.ts"),
+    ]);
   });
+});
 
-  it("実装だけ → 成功（実装のPR）", () => {
-    expect(checkTamper(["packages/booking-core/src/availability.ts"], config)).toEqual({
-      ok: true,
-    });
-  });
-
-  it("自律度「中」の領域のテストと実装の両方 → 失敗", () => {
+describe("既存の自律度「中」のテストの改ざんを見つける", () => {
+  it("新しいテストとスタブ（実装）と失敗予定リストの追加 → 成功（テストのPR）", () => {
     expect(
-      checkTamper(
-        [
-          "packages/booking-core/src/availability.test.ts",
-          "packages/booking-core/src/availability.ts",
-        ],
-        config,
-      ),
-    ).toEqual({
-      ok: false,
-      mediumTests: ["packages/booking-core/src/availability.test.ts"],
-      implementations: ["packages/booking-core/src/availability.ts"],
-    });
+      checkTamper([A(TEST), A(IMPL), M("harness/expected-failures.txt")], config, [TEST]),
+    ).toEqual([]);
+  });
+
+  it("実装だけと失敗予定リストからの削除 → 成功（実装のPR）", () => {
+    expect(checkTamper([M(IMPL), M("harness/expected-failures.txt")], config, [])).toEqual([]);
+  });
+
+  it("既存のテストの変更だけ → 成功（テストを直すPR。人間がレビュー）", () => {
+    expect(checkTamper([M(TEST)], config)).toEqual([]);
+  });
+
+  it("既存のテストの変更と実装 → 失敗", () => {
+    expect(checkTamper([M(TEST), M(IMPL)], config)).toEqual([
+      { kind: "existing-test-changed", tests: [TEST], implementations: [IMPL] },
+    ]);
+  });
+
+  it("既存のテストの削除と実装 → 失敗", () => {
+    expect(checkTamper([D(TEST), M(IMPL)], config)).toEqual([
+      { kind: "existing-test-changed", tests: [TEST], implementations: [IMPL] },
+    ]);
+  });
+
+  it("既存のテストの変更と、別の領域の実装 → 失敗（実装の場所を問わない）", () => {
+    expect(checkTamper([M(TEST), M("apps/admin/src/App.tsx")], config)).toHaveLength(1);
   });
 
   it("自律度「高」の領域のテストと実装の両方 → 成功", () => {
-    expect(
-      checkTamper(
-        [
-          "apps/site-zebra/src/components/Header.test.ts",
-          "apps/site-zebra/src/components/Header.tsx",
-        ],
-        config,
-      ),
-    ).toEqual({ ok: true });
+    const changes = [
+      M("apps/site-zebra/src/components/Header.test.ts"),
+      M("apps/site-zebra/src/components/Header.tsx"),
+    ];
+    expect(checkTamper(changes, config)).toEqual([]);
   });
 
-  it("自律度「中」の領域のテストと仕様（docs） → 成功（仕様とテストを一緒に直すPR。人間がレビュー）", () => {
-    expect(
-      checkTamper(
-        ["packages/booking-core/src/availability.test.ts", "docs/product-specs/booking.md"],
-        config,
-      ),
-    ).toEqual({ ok: true });
+  it("既存のテストと仕様（docs） → 成功（仕様とテストを一緒に直すPR。人間がレビュー）", () => {
+    expect(checkTamper([M(TEST), M("docs/product-specs/booking.md")], config)).toEqual([]);
   });
 
-  it("自律度「中」の領域のテストと、別の領域の実装 → 失敗（実装の場所を問わない）", () => {
-    const result = checkTamper(
-      ["packages/booking-core/src/availability.test.ts", "apps/admin/src/App.tsx"],
-      config,
-    );
-    expect(result.ok).toBe(false);
-  });
-
-  it("自律度「中」の領域のテストの削除も、変更として数える", () => {
-    // git diff --name-only は削除されたファイルも列挙するので、同じ扱いになる
-    const result = checkTamper(
-      ["packages/contracts/src/schema.test.ts", "packages/contracts/src/schema.ts"],
-      config,
-    );
-    expect(result.ok).toBe(false);
+  it("既存のテストを失敗予定リストに足す → 失敗（レビュー済みのテストを隠せない）", () => {
+    expect(checkTamper([M(IMPL), M("harness/expected-failures.txt")], config, [TEST])).toEqual([
+      { kind: "expected-failure-not-new", entries: [TEST] },
+    ]);
   });
 });

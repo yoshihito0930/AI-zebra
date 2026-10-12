@@ -23,8 +23,9 @@
 | `pnpm dev:admin` | 管理画面（http://localhost:5174/） |
 | `pnpm dev:api` | API（http://localhost:8787/health） |
 | `pnpm test-tamper` | テストの改ざん防止のチェック（main との差分） |
+| `pnpm expected-failures` | 失敗予定リストのテストが、まだ失敗するかの確認 |
 
 ## 変更の流れ
 
-main は保護されている。ブランチを切って PR を出し、CI（`lint`・`typecheck`・`deps`・`test`・`test-int`・`spec-coverage`・`test-tamper`）が通ってからマージする。
+main は保護されている。ブランチを切って PR を出し、CI（`lint`・`typecheck`・`deps`・`test`・`test-int`・`spec-coverage`・`test-tamper`・`expected-failures`）が通ってからマージする。
 テストと実装の進め方は [docs/TESTING.md](docs/TESTING.md)。
