@@ -12,6 +12,9 @@
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
+    "test:int": "vitest run --config vitest.int.config.ts",
+    "db:up": "docker compose up -d --wait dynamodb",
+    "db:down": "docker compose down",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm deps && pnpm test && pnpm spec-coverage",
     "deps": "depcruise . --config .dependency-cruiser.cjs",
     "spec-coverage": "node scripts/harness/src/spec-coverage-cli.ts",
@@ -22,6 +25,7 @@
     "dev:api": "pnpm --filter @zebra/api dev"
   },
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "3.1141.0",
     "@types/node": "24.19.0",
     "@zebra/eslint-config": "workspace:*",
     "dependency-cruiser": "18.4.0",

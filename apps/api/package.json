@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1141.0",
     "@hono/node-server": "2.1.1",
     "hono": "4.13.9"
   },
