@@ -44,7 +44,7 @@ const noDirectCurrentTime = [
 
 export default tseslint.config(
   {
-    ignores: ["**/node_modules/**", "**/dist/**", "**/coverage/**"],
+    ignores: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.astro/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -55,6 +55,13 @@ export default tseslint.config(
     rules: {
       "no-restricted-imports": ["error", { patterns: [otherDateLibraries, sesClients] }],
       "no-restricted-syntax": ["error", ...noDirectCurrentTime],
+    },
+  },
+  {
+    // ブラウザで動くもの
+    files: ["apps/admin/**", "apps/site-*/**", "packages/booking-widget/**"],
+    languageOptions: {
+      globals: { ...globals.browser },
     },
   },
   {

@@ -1,0 +1,19 @@
+{
+  "name": "@zebra/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "hono": "4.13.9"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "@zebra/tsconfig": "workspace:*",
+    "typescript": "6.0.3"
+  }
+}

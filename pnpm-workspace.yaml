@@ -4,4 +4,10 @@ packages:
   - "tooling/*"
   - "scripts/*"
 
+# 依存パッケージのインストール時のスクリプトは、既定で実行しない（pnpm の既定）。
+# 許可・不許可を決めたものだけここに書く。
+# esbuild：スクリプトはバイナリの確認だけで、バイナリは別の部品（@esbuild/*）として入るので不要
+allowBuilds:
+  esbuild: false
+
 engineStrict: true
