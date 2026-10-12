@@ -15,7 +15,11 @@
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm deps && pnpm test && pnpm spec-coverage",
     "deps": "depcruise . --config .dependency-cruiser.cjs",
     "spec-coverage": "node scripts/harness/src/spec-coverage-cli.ts",
-    "test-tamper": "node scripts/harness/src/test-tamper-cli.ts"
+    "test-tamper": "node scripts/harness/src/test-tamper-cli.ts",
+    "build": "pnpm -r --if-present build",
+    "dev:site": "pnpm --filter @zebra/site-zebra dev",
+    "dev:admin": "pnpm --filter @zebra/admin dev",
+    "dev:api": "pnpm --filter @zebra/api dev"
   },
   "devDependencies": {
     "@types/node": "24.19.0",
