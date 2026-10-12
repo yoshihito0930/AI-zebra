@@ -22,6 +22,11 @@
 | 定期実行 | EventBridge Scheduler → Lambda | Googleカレンダーの取り込み（1日1回）。常時起動しない（INV-8） |
 | 外部連携 | Google Calendar API（v1は読み取りのみ。書き込みはv1のあと） | 並行稼働の間の予約の取り込み。認証情報は SSM Parameter Store（SecureString）に置く（INV-8）。GCPで別の仕組みを作らず、AWSとTerraformにまとめる |
 | スキーマ・契約 | Zod（packages/contracts） | API・ウィジェット・管理画面で同じ型を使う |
+| 予約のルール | packages/booking-core（入出力を持たない純粋な関数） | DB なしでテストできる。API とウィジェット（見積表示）で同じ計算を使う |
+| 実行環境 | Node.js 24（LTS） | Lambda が対応している LTS で、サポート期間が長い |
+| テスト | Vitest、fast-check、DynamoDB Local（Docker） | AWS に接続せずに、単体・プロパティベース・統合テストを回せる |
+| lint・整形 | ESLint（typescript-eslint）、dependency-cruiser、Prettier | 不変条件の一部を lint にする（[TESTING.md](TESTING.md)） |
+| 日時 | Luxon（日時ライブラリはこれ1つ。INV-7） | タイムゾーンを明示して扱える |
 | IaC | Terraform。stateはS3（`use_lockfile` でロック） | ロック用のDynamoDBテーブルが不要 |
 | パッケージ管理 | pnpm workspaces | モノレポの標準的な構成 |
 
@@ -115,13 +120,14 @@ AWS Budgetsで月額のアラートを設定する。
 | 人間がリリースタグを付ける | prod へのアプリのデプロイ。prod の `terraform plan` |
 | prod の `terraform apply` | CI では実行しない。人間が plan の結果を確認して手元から実行する |
 
-理由：本番に出るタイミングを人間が決められる。GitHub の「承認者が必要な環境」は無料プランでは公開リポジトリでしか使えないので、タグで代わりにする。
+理由：本番に出るタイミングを人間が決められる。
+
+リポジトリは公開にし、main ブランチの保護（CI を必須のステータスチェックにする）と、タグのルールセットを使う（GitHub の無料プランでは、非公開リポジトリでこれらが使えないため）。公開リポジトリでの決まりは [docs/exec-plans/skeleton-and-ci.md](exec-plans/skeleton-and-ci.md) を参照。
 
 
 ## 未決事項
 
 - [ ] Organizations の管理アカウントを dev と prod のどちらにするか（または管理専用のアカウントを作るか）
-- [ ] リリースタグを付けられる人を、GitHub の設定（ルールセットなど）で制限できるか。リポジトリのプランと公開・非公開の確認
 - [ ] Route 53 に移す時期。移したあと Xserver を解約する時期
 - [ ] ドメインの登録先（レジストラ）と、更新の管理
 - [ ] 24時間を超えるブロック枠（連休の休業、Googleカレンダーの複数日の予定など）の枠の確保方法。30分の枠に区切ると、5日間で240アイテムになり、`TransactWriteItems` の上限（100アイテム）を超える。INV-2 を守れる形をキー設計で決める（自律度「低」）

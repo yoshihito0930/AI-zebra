@@ -10,6 +10,7 @@
 3. [docs/product-specs/booking.md](docs/product-specs/booking.md) — 予約・空き判定の仕様
 4. [docs/TECH_STACK.md](docs/TECH_STACK.md) — 技術スタックと選定理由
 5. [docs/TESTING.md](docs/TESTING.md) — テストの進め方。**テストを書く・実装する前に必読**
+6. [docs/exec-plans/](docs/exec-plans/) — 進行中の作業計画
 
 デザインの方向性（docs/DESIGN.md）は未決定。UIは決定まで最小限の見た目で実装する。
 
@@ -20,12 +21,14 @@ apps/site-zebra/      HP（Astro）
 apps/admin/           予約管理画面
 apps/api/             予約API
 packages/contracts/   公開APIのスキーマ（Zod）
+packages/booking-core/    予約のルール（入出力を持たない純粋な関数）
 packages/booking-widget/  HP埋め込み用カレンダー
+packages/clock/           現在時刻の部品（INV-7）
 infra/                Terraform
 docs/                 仕様・設計・計画
 ```
 
-骨組み作成後、このセクションを実際の構成に合わせて更新すること。
+詳細は [docs/exec-plans/skeleton-and-ci.md](docs/exec-plans/skeleton-and-ci.md)。骨組み作成後、このセクションを実際の構成に合わせて更新すること。
 
 ## 作業ルール
 
@@ -35,3 +38,4 @@ docs/                 仕様・設計・計画
 - 仕様が曖昧なときは推測で実装しない。product-specs の「未決事項」に追記し、PRで人間に質問する
 - 作業中に詰まったこと、足りなかったもの（ドキュメント、lint、ツール）は [docs/harness-log.md](docs/harness-log.md) に記録する
 - 決まったことはリポジトリに残す。会話やチャットにしかない決定は、存在しないものとして扱う
+- このリポジトリは公開する。秘密情報（鍵、トークン、パスワード）とお客様の個人情報は、コード・テストデータ・ドキュメント・コミットに入れない。テストデータの氏名や連絡先は、架空のものを使う
