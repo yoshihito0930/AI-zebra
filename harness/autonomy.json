@@ -1,0 +1,10 @@
+{
+  "$comment": "自律度「中」の領域のパス（core-beliefs.md の自律度の表）。テストの改ざん防止のチェック（scripts/harness）が、比較元（main）のこのファイルを読む。このファイルの変更も自律度「中」。",
+  "medium": [
+    "packages/booking-core/src/**",
+    "packages/contracts/src/**",
+    "apps/api/src/public/**",
+    "apps/api/src/mail/**",
+    "apps/api/src/gcal/**"
+  ]
+}

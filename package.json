@@ -12,8 +12,10 @@
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm deps && pnpm test",
-    "deps": "depcruise . --config .dependency-cruiser.cjs"
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm deps && pnpm test && pnpm spec-coverage",
+    "deps": "depcruise . --config .dependency-cruiser.cjs",
+    "spec-coverage": "node scripts/harness/src/spec-coverage-cli.ts",
+    "test-tamper": "node scripts/harness/src/test-tamper-cli.ts"
   },
   "devDependencies": {
     "@types/node": "24.19.0",

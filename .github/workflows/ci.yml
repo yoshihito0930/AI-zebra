@@ -64,3 +64,29 @@ jobs:
       - uses: ./.github/actions/setup
       - name: 単体テスト
         run: pnpm test
+
+  spec-coverage:
+    name: spec-coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: 仕様の例の節がテストにあるか（TESTING.md）
+        run: pnpm spec-coverage
+
+  test-tamper:
+    name: test-tamper
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: 自律度「中」のテストと実装の同時変更がないか（TESTING.md）
+        run: pnpm test-tamper --base "origin/${{ github.base_ref }}"

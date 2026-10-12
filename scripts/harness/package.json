@@ -1,0 +1,14 @@
+{
+  "name": "@zebra/harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "@zebra/tsconfig": "workspace:*",
+    "typescript": "6.0.3"
+  }
+}
