@@ -52,7 +52,7 @@ docs/                     仕様・設計・計画
 |---|---|---|
 | Node.js | 24（LTS）。`.nvmrc` と `package.json` の `engines` で固定 | Lambda が対応している LTS の中で、サポート期間が長い。手元は 22.4.1 なので更新が必要 |
 | パッケージ管理 | pnpm（workspaces）。corepack でバージョンを固定 | TECH_STACK.md のとおり。手元には未導入 |
-| 言語 | TypeScript（`strict`）。プロジェクト参照（`tsc -b`）で全体の型チェックを1コマンドにする | |
+| 言語 | TypeScript 6.0（`strict`）。型チェックはパッケージごとの `tsc --noEmit` を `pnpm typecheck` でまとめて実行する | typescript-eslint が対応しているのが TypeScript 6.0 までのため、7 系は使わない。パッケージは TypeScript のソースのまま参照させる（ビルド済みの型定義を出さない）ので、プロジェクト参照（`tsc -b`）は使わない |
 | テスト | Vitest。プロパティベーステストは fast-check | Vite（管理画面）と設定を揃えられる。TESTING.md の想定どおり |
 | lint | ESLint（flat config）と typescript-eslint | 不変条件の lint を `no-restricted-imports` などの標準ルールで書ける |
 | 依存の方向 | dependency-cruiser | INV-5 と、上の依存の方向の表を機械で確かめる |
@@ -89,7 +89,7 @@ docs/                     仕様・設計・計画
 |---|---|---|
 | 準備 | pnpm のインストール（キャッシュ付き） | |
 | lint | ESLint（不変条件の lint を含む）、Prettier の確認 | INV-6、INV-7（下の5） |
-| 型チェック | `tsc -b` | INV-4（型の面） |
+| 型チェック | `pnpm typecheck`（パッケージごとの `tsc --noEmit`） | INV-4（型の面） |
 | 依存の方向 | dependency-cruiser | INV-5、1の表 |
 | 単体テスト | Vitest（プロパティベーステストを含む） | INV-1、INV-9 |
 | 統合テスト | Vitest と DynamoDB Local | INV-2、INV-6、INV-10 |
