@@ -1,0 +1,5 @@
+# 仕様や設計は人間が読む形のまま保つ（表の桁揃えなどで差分を出さない）
+*.md
+pnpm-lock.yaml
+dist/
+coverage/
