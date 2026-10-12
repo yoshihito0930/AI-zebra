@@ -16,6 +16,8 @@
 | `pnpm install` | 依存のインストール |
 | `pnpm check` | lint・整形・型・依存の方向・単体テスト・例の網羅（CI とほぼ同じ） |
 | `pnpm test` | 単体テスト |
+| `pnpm db:up` / `pnpm db:down` | ローカルの DynamoDB（Docker）の起動・停止 |
+| `pnpm test:int` | 統合テスト（先に `pnpm db:up`） |
 | `pnpm build` | すべてのアプリをビルド |
 | `pnpm dev:site` | HP（http://localhost:4321/） |
 | `pnpm dev:admin` | 管理画面（http://localhost:5174/） |
@@ -24,5 +26,5 @@
 
 ## 変更の流れ
 
-main は保護されている。ブランチを切って PR を出し、CI（`lint`・`typecheck`・`deps`・`test`・`spec-coverage`・`test-tamper`）が通ってからマージする。
+main は保護されている。ブランチを切って PR を出し、CI（`lint`・`typecheck`・`deps`・`test`・`test-int`・`spec-coverage`・`test-tamper`）が通ってからマージする。
 テストと実装の進め方は [docs/TESTING.md](docs/TESTING.md)。

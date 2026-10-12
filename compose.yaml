@@ -1,0 +1,8 @@
+# 統合テスト用のローカルの DynamoDB（docs/TESTING.md「すべてのテストは、AWSに接続せずローカルで実行できる」）。
+# 手元では pnpm db:up / pnpm db:down、CI でも同じファイルを使う。データはメモリ上だけに置く。
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:3.3.1@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
+    ports:
+      - "127.0.0.1:8000:8000"

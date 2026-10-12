@@ -98,7 +98,7 @@ docs/                     仕様・設計・計画
 
 手元でも同じ確認を `pnpm check`（lint・型・依存・単体テスト）と `pnpm test:int`（統合テスト）で実行できるようにする。
 
-main ブランチの保護で必須にするステータスチェック：`lint`、`typecheck`、`deps`、`test`（PR2）、`spec-coverage`、`test-tamper`（PR3）。ジョブ名を変えるときは保護の設定も直す。`test-tamper` はプルリクエストのときだけ動く。
+main ブランチの保護で必須にするステータスチェック：`lint`、`typecheck`、`deps`、`test`（PR2）、`spec-coverage`、`test-tamper`（PR3）、`test-int`（PR5）。ジョブ名を変えるときは保護の設定も直す。`test-tamper` はプルリクエストのときだけ動く。
 
 GitHub Actions の部品（`actions/checkout` など）は、タグではなくコミットの SHA で固定する（公開リポジトリで、部品の差し替えによる攻撃を防ぐため）。
 
