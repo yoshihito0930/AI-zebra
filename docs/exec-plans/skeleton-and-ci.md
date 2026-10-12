@@ -43,7 +43,7 @@ docs/                     仕様・設計・計画
 | `apps/admin` | `packages/contracts`、`packages/booking-core`、`packages/clock` |
 | `apps/api` | `packages/contracts`、`packages/booking-core`、`packages/clock` |
 | `packages/booking-widget` | `packages/contracts`、`packages/booking-core`（見積の表示に使う。画面の見積と API の計算を必ず一致させるため） |
-| `packages/booking-core` | `packages/contracts` だけ。AWS SDK、HTTP、DB、`Date.now()` を使わない（現在時刻は引数で受け取る） |
+| `packages/booking-core` | ワークスペースのパッケージは `packages/contracts` だけ。外部パッケージは、入出力を持たないもの（Luxon など）だけ。Node の組み込みモジュール、AWS SDK、HTTP、DB、`Date.now()` を使わない（現在時刻は引数で受け取る） |
 | `packages/contracts` | Zod だけ |
 
 ## 2. 共通の道具
@@ -97,6 +97,10 @@ docs/                     仕様・設計・計画
 | テストの改ざん防止 | 独自スクリプト（下の6）。プルリクエストのときだけ | TESTING.md「実装PRでテストを変更させない」 |
 
 手元でも同じ確認を `pnpm check`（lint・型・依存・単体テスト）と `pnpm test:int`（統合テスト）で実行できるようにする。
+
+main ブランチの保護で必須にするステータスチェック：`lint`、`typecheck`、`deps`、`test`（PR2 で作成。ジョブ名を変えるときは保護の設定も直す）。例の網羅とテストの改ざん防止のジョブは、PR3 で足して必須に加える。
+
+GitHub Actions の部品（`actions/checkout` など）は、タグではなくコミットの SHA で固定する（公開リポジトリで、部品の差し替えによる攻撃を防ぐため）。
 
 CI が失敗したらマージできないよう、main ブランチを保護する（必須のステータスチェック）。そのため、リポジトリは**公開**にする（GitHub の無料プランでは、非公開リポジトリのブランチ保護が使えないため）。
 
