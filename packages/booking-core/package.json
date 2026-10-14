@@ -10,9 +10,11 @@
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
-    "@zebra/contracts": "workspace:*"
+    "@zebra/contracts": "workspace:*",
+    "luxon": "3.7.2"
   },
   "devDependencies": {
+    "@types/luxon": "3.7.6",
     "@zebra/tsconfig": "workspace:*",
     "typescript": "6.0.3"
   }
