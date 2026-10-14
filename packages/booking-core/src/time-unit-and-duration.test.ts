@@ -11,6 +11,15 @@ function jst(iso: string): DateTime {
   return dateTime;
 }
 
+// JST 以外のタイムゾーンで渡す例のために、UTC のゾーンで日時を作る
+function utc(iso: string): DateTime {
+  const dateTime = DateTime.fromISO(iso, { zone: "UTC" });
+  if (!dateTime.isValid) {
+    throw new Error(`テストの日時が不正：${iso}`);
+  }
+  return dateTime;
+}
+
 function check(start: string, end: string) {
   return checkTimeUnitAndDuration(jst(start), jst(end));
 }
@@ -95,6 +104,19 @@ describe("時間の単位と利用時間", () => {
     expect(check("2026-10-20T10:00", "2026-10-21T10:30")).toEqual({
       ok: false,
       reason: "longer-than-24-hours",
+    });
+  });
+
+  it("10/20 03:00–05:00 を UTC（10/19 18:00–20:00）で渡す：予約不可（深夜帯にかかり、4時間未満。UTCの時刻では深夜帯にかからないが、判定はJST）", () => {
+    expect(checkTimeUnitAndDuration(utc("2026-10-19T18:00"), utc("2026-10-19T20:00"))).toEqual({
+      ok: false,
+      reason: "late-night-shorter-than-4-hours",
+    });
+  });
+
+  it("10/20 10:00–12:00 を UTC（10/20 01:00–03:00）で渡す：予約可（UTCの時刻では深夜帯にかかるが、判定はJST）", () => {
+    expect(checkTimeUnitAndDuration(utc("2026-10-20T01:00"), utc("2026-10-20T03:00"))).toEqual({
+      ok: true,
     });
   });
 });
