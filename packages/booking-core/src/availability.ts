@@ -1,6 +1,8 @@
 // 空き判定（docs/product-specs/booking.md「空き判定」「バッファを30分に縮める」。INV-1）
 // 区間はすべて半開区間 [start, end)。占有区間は [start, end + バッファ)。
-// 第二キープの申込だけ仮予約1件との重なりを許す例外（「第二キープ」の節）は、ここでは扱わない。
+// 第二キープの申込だけ仮予約1件との重なりを許す例外（「第二キープ」の節）は、ここでは扱わない（second-hold.ts）。
+// 占有区間・重なり・枠を確保する状態の判定は second-hold.ts と共有する（同じ計算を2か所に持たない）。
+// 共有の部品は booking-core の中だけで使い、index.ts からは出さない。
 import type { ReservationStatus } from "@zebra/contracts";
 import type { DateTime } from "luxon";
 
@@ -79,12 +81,12 @@ function assertValidRange(range: TimeRange, what: string): void {
  * 半開区間 [a.start, a.end) と [b.start, b.end) が重なるか。接するだけなら重ならない。
  * 時点（ミリ秒）で比べるので、渡された DateTime のゾーンによらない
  */
-function overlaps(a: TimeRange, b: TimeRange): boolean {
+export function overlaps(a: TimeRange, b: TimeRange): boolean {
   return a.start.toMillis() < b.end.toMillis() && b.start.toMillis() < a.end.toMillis();
 }
 
 /** 「予約の状態」の節の表で、占有区間の枠を確保する状態か。取消・終了は確保しない */
-function holdsSlots(status: ReservationStatus): boolean {
+export function holdsSlots(status: ReservationStatus): boolean {
   switch (status) {
     case "pending-provisional":
     case "pending-firm":
@@ -103,7 +105,7 @@ function holdsSlots(status: ReservationStatus): boolean {
  * 占有区間 occupied が、枠を確保している予約とブロック枠のどれかの占有区間と重なるか。
  * 不正な区間の予約・ブロック枠があれば RangeError を投げる（状態が取消・終了の予約は枠を確保しないので確かめない）
  */
-function overlapsAnyHolding(
+export function overlapsAnyHolding(
   occupied: TimeRange,
   reservations: readonly ExistingReservation[],
   blocks: readonly ExistingBlock[],
@@ -127,7 +129,11 @@ export function occupiedRange(range: TimeRange, bufferMinutes: BufferMinutes): T
 }
 
 /** occupiedRange と同じ。RangeError のメッセージに、どの区間かを書く */
-function occupiedRangeOf(range: TimeRange, bufferMinutes: BufferMinutes, what: string): TimeRange {
+export function occupiedRangeOf(
+  range: TimeRange,
+  bufferMinutes: BufferMinutes,
+  what: string,
+): TimeRange {
   assertValidRange(range, what);
   return { start: range.start, end: range.end.plus({ minutes: bufferMinutes }) };
 }
