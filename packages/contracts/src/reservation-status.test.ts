@@ -6,10 +6,10 @@ describe("予約の状態", () => {
     expect(ReservationStatus.options).toEqual([
       "pending-provisional",
       "pending-firm",
-      "pending-second-keep",
+      "pending-second-hold",
       "provisional",
       "firm",
-      "second-keep",
+      "second-hold",
       "cancelled",
       "ended",
     ]);
