@@ -121,6 +121,30 @@ describe("テスト担当のガード", () => {
     expect(d("Bash", { command })).toBeUndefined();
   });
 
+  it.each([
+    // 2026-10-17 に実際に通ってしまったコマンド（docs/harness-log.md）
+    "git checkout -b test/x && pnpm add -D -w fast-check 2>&1 | tail -5",
+    'sed -i \'s/"fast-check": "^4.10.2"/"fast-check": "4.10.2"/\' package.json',
+    "pnpm --filter @zebra/booking-core add luxon",
+    "npm install fast-check",
+    "npm i -D fast-check",
+    "pnpm install -D -w fast-check",
+    "pnpm remove zod",
+    "echo '{}' > packages/booking-core/package.json",
+  ])("依存を変えるコマンドは止める：%s", (command) => {
+    expect(d("Bash", { command })).toMatch(/依存/);
+  });
+
+  it.each([
+    "pnpm install",
+    "pnpm install --frozen-lockfile",
+    "cat package.json packages/booking-core/package.json",
+    "pnpm --filter @zebra/booking-core typecheck",
+    "pnpm vitest run packages/booking-core/src/add.test.ts",
+  ])("依存を変えないコマンドは許す：%s", (command) => {
+    expect(d("Bash", { command })).toBeUndefined();
+  });
+
   it("スクラッチパッドに書くのは許す（PR 本文の下書きなど）", () => {
     expect(
       d("Write", { file_path: "/tmp/claude-0/-repo/3dbb3d1e/scratchpad/pr-body.md" }),
