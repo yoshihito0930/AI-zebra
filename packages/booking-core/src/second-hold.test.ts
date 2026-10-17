@@ -11,7 +11,7 @@ import {
   checkAvailability,
   occupiedRange,
 } from "./availability";
-import { type SecondHoldRejection, checkSecondHoldApplication } from "./second-hold";
+import { checkSecondHoldApplication } from "./second-hold";
 
 // 第二キープの申込の判定は現在時刻を使わない（日時はすべて引数で渡す。INV-7）
 
@@ -84,7 +84,7 @@ const holdingStatuses = [
   "firm",
   "second-hold",
 ] as const satisfies readonly ReservationStatus[];
-// 第二キープ（承認待ちを含む）。「1件の仮予約に重なる第二キープは、承認待ちを含めて1件まで」
+// 第二キープ（承認待ちを含む）。「第二キープどうしは、承認待ちを含めて重なれない」
 const secondHoldStatuses = [
   "pending-second-hold",
   "second-hold",
@@ -98,9 +98,12 @@ describe("第二キープ", () => {
         expectRange(occupiedRange(p, 60), "13:00", "16:00");
         expect(applySecondHold(zone, "13:00", "15:00", [p]), zone).toEqual({ ok: true });
 
-        // 枠を確保する：承認待ちのまま、同じ区間の申込は受けない（理由は「1件まで」と「ほかの第二キープと重なる」の両方に当たるので確かめない）
+        // 枠を確保する：承認待ちのまま、同じ区間の第二キープ申込は受けない（ほかの第二キープと重なる）
         const accepted = reservation(zone, "S", "pending-second-hold", "13:00", "15:00");
-        expect(applySecondHold(zone, "13:00", "15:00", [p, accepted]).ok, zone).toBe(false);
+        expect(applySecondHold(zone, "13:00", "15:00", [p, accepted]), zone).toEqual({
+          ok: false,
+          reason: "overlaps-existing",
+        });
       }
     });
 
@@ -114,25 +117,35 @@ describe("第二キープ", () => {
       }
     });
 
-    // 申込の区間は例にない。すでにある第二キープ K1 を 14:00–17:00（占有区間 14:00–18:00）とし、
-    // 2件目は 11:00–13:00（占有区間 11:00–14:00）とする。P（13:00–16:00）とだけ重なり、K1 とは 14:00 で接するだけなので、
-    // 「ほかの第二キープと重なる」ではなく「その仮予約にはすでに第二キープがある」の理由で不可になる
-    it("P に第二キープがすでに1件（承認待ちを含む）あるときの、2件目の第二キープ：不可", () => {
+    // すでにある第二キープは、承認待ち（pending-second-hold）と第二キープ（second-hold）の両方で確かめる（「承認待ちでも同じ」）
+    it("P に第二キープ 14:00–17:00（占有区間 14:00–18:00）がすでにあるときの、第二キープ 13:00–15:00（占有区間 13:00–16:00）：不可（すでにある第二キープと重なる。承認待ちでも同じ）", () => {
+      for (const zone of zones) {
+        const p = reservationP(zone);
+        const applied = { start: at("13:00", zone), end: at("15:00", zone) };
+        expectRange(occupiedRange(applied, 60), "13:00", "16:00");
+        for (const status of secondHoldStatuses) {
+          const k = reservation(zone, "K", status, "14:00", "17:00");
+          expectRange(occupiedRange(k, 60), "14:00", "18:00");
+          expect(
+            applySecondHold(zone, "13:00", "15:00", [p, k]),
+            `${zone}、すでにある第二キープは ${status}`,
+          ).toEqual({ ok: false, reason: "overlaps-existing" });
+        }
+      }
+    });
+
+    // すでにある第二キープの状態は例にないので、承認待ちと第二キープの両方で確かめる
+    it("P に第二キープ 14:00–17:00（占有区間 14:00–18:00）がすでにあるときの、第二キープ 11:00–13:00（占有区間 11:00–14:00）：受付（Pとだけ重なり、すでにある第二キープとは14:00で接するだけ）", () => {
       for (const zone of zones) {
         const p = reservationP(zone);
         const applied = { start: at("11:00", zone), end: at("13:00", zone) };
         expectRange(occupiedRange(applied, 60), "11:00", "14:00");
-
-        // 対照：K1 がなければ受付になる区間（P とだけ重なる）
-        expect(applySecondHold(zone, "11:00", "13:00", [p]), zone).toEqual({ ok: true });
-
         for (const status of secondHoldStatuses) {
-          const k1 = reservation(zone, "K1", status, "14:00", "17:00");
-          expectRange(occupiedRange(k1, 60), "14:00", "18:00");
+          const k = reservation(zone, "K", status, "14:00", "17:00");
           expect(
-            applySecondHold(zone, "11:00", "13:00", [p, k1]),
-            `${zone}、K1 は ${status}`,
-          ).toEqual({ ok: false, reason: "provisional-already-has-second-hold" });
+            applySecondHold(zone, "11:00", "13:00", [p, k]),
+            `${zone}、すでにある第二キープは ${status}`,
+          ).toEqual({ ok: true });
         }
       }
     });
@@ -145,6 +158,34 @@ describe("第二キープ", () => {
           reason: "overlaps-existing",
         });
       }
+    });
+  });
+
+  // すでにある第二キープ①の状態は例にないので、承認待ちと第二キープの両方で確かめる
+  describe("1件の仮予約に、重ならない第二キープを2件入れる場合。仮予約 12:00–18:00（占有区間 12:00–19:00）に、第二キープ① 11:00–14:00（占有区間 11:00–15:00）がすでにあるとき。", () => {
+    function expectRow(start: string, end: string, occupiedEnd: string, expected: unknown): void {
+      for (const zone of zones) {
+        const provisional = reservation(zone, "P", "provisional", "12:00", "18:00");
+        expectRange(occupiedRange(provisional, 60), "12:00", "19:00");
+        const applied = { start: at(start, zone), end: at(end, zone) };
+        expectRange(occupiedRange(applied, 60), start, occupiedEnd);
+        for (const status of secondHoldStatuses) {
+          const first = reservation(zone, "S1", status, "11:00", "14:00");
+          expectRange(occupiedRange(first, 60), "11:00", "15:00");
+          expect(
+            applySecondHold(zone, start, end, [provisional, first]),
+            `${zone}、①は ${status}`,
+          ).toEqual(expected);
+        }
+      }
+    }
+
+    it("第二キープ② 15:00–20:00（占有区間 15:00–21:00）：受付（仮予約とだけ重なり、①とは15:00で接するだけ）", () => {
+      expectRow("15:00", "20:00", "21:00", { ok: true });
+    });
+
+    it("第二キープ 14:00–20:00（占有区間 14:00–21:00）：不可（①と重なる）", () => {
+      expectRow("14:00", "20:00", "21:00", { ok: false, reason: "overlaps-existing" });
     });
   });
 
@@ -295,23 +336,15 @@ describe("第二キープ", () => {
       );
     }
 
-    // 仕様のルールを、テストの側で分の数から判定する。重なる承認済みの仮予約がちょうど1件のときだけ使う
-    function rules(applied: Shape, items: readonly Item[], blocks: readonly Shape[]) {
-      const [provisional] = overlappingProvisionals(applied, items);
-      if (provisional === undefined) {
-        throw new Error("重なる仮予約がちょうど1件のときだけ使う");
-      }
-      // 承認済みの仮予約以外の、枠を確保している予約かブロック枠と重なる
-      const overlapsOther =
+    // 仕様のルールを、テストの側で分の数から判定する：承認済みの仮予約以外の、枠を確保している予約
+    // （承認待ち・本予約・ほかの第二キープ〔承認待ちを含む〕）かブロック枠と重なる
+    function overlapsOther(applied: Shape, items: readonly Item[], blocks: readonly Shape[]) {
+      return (
         items.some(
           ({ shape, status }) =>
             isHolding(status) && status !== "provisional" && occupiedOverlaps(applied, shape),
-        ) || blocks.some((block) => occupiedOverlaps(applied, block));
-      // 重なる仮予約に、第二キープ（承認待ちを含む）がすでにある
-      const alreadyHasSecondHold = items.some(
-        ({ shape, status }) => isSecondHold(status) && occupiedOverlaps(provisional.shape, shape),
+        ) || blocks.some((block) => occupiedOverlaps(applied, block))
       );
-      return { overlapsOther, alreadyHasSecondHold };
     }
 
     // P（承認済みの仮予約）と、ほかの予約（取消・終了を含むすべての状態）、ブロック枠
@@ -326,7 +359,7 @@ describe("第二キープ", () => {
       return [{ shape: p, status: "provisional" }, ...others];
     }
 
-    it("受付になった第二キープの占有区間は、承認済みの仮予約以外の、枠を確保している予約とブロック枠のどの占有区間とも重ならない", () => {
+    it("受付になった第二キープの占有区間は、承認済みの仮予約以外の、枠を確保している予約（ほかの第二キープ〔承認待ちを含む〕を含む）とブロック枠のどの占有区間とも重ならない", () => {
       fc.assert(
         fc.property(
           reservationShape,
@@ -339,13 +372,14 @@ describe("第二キープ", () => {
             fc.pre(overlappingProvisionals(applied, items).length === 1);
             const result = check(applied, items, blocks, z);
             fc.pre(result.ok);
-            expect(rules(applied, items, blocks).overlapsOther).toBe(false);
+            expect(overlapsOther(applied, items, blocks)).toBe(false);
           },
         ),
       );
     });
 
-    it("受付になったなら、重なる仮予約に、第二キープ（承認待ちを含む）はほかにない", () => {
+    // 重なる仮予約に第二キープがすでにあっても、その第二キープと重ならなければ受付（1件の仮予約に何件でもよい）
+    it("承認済みの仮予約以外の、枠を確保している予約とブロック枠のどの占有区間とも重ならなければ受付。重なれば不可（本予約などと重なる）", () => {
       fc.assert(
         fc.property(
           reservationShape,
@@ -356,51 +390,18 @@ describe("第二キープ", () => {
           (applied, p, others, blocks, z) => {
             const items = itemsWith(p, others);
             fc.pre(overlappingProvisionals(applied, items).length === 1);
-            const result = check(applied, items, blocks, z);
-            fc.pre(result.ok);
-            expect(rules(applied, items, blocks).alreadyHasSecondHold).toBe(false);
+            const expected = overlapsOther(applied, items, blocks)
+              ? { ok: false, reason: "overlaps-existing" }
+              : { ok: true };
+            expect(check(applied, items, blocks, z)).toEqual(expected);
           },
         ),
-      );
-    });
-
-    // 不可の理由が両方に当たるときに、どちらを返すかは仕様にないので確かめない
-    it("上の2つが成り立てば必ず受付になる。不可の理由は、成り立たなかった方（本予約などと重なる／その仮予約にはすでに第二キープがある）", () => {
-      fc.assert(
-        fc.property(
-          reservationShape,
-          provisionalShape,
-          otherItems,
-          blockShapes,
-          anyZone,
-          (applied, p, others, blocks, z) => {
-            const items = itemsWith(p, others);
-            fc.pre(overlappingProvisionals(applied, items).length === 1);
-            const { overlapsOther, alreadyHasSecondHold } = rules(applied, items, blocks);
-            const result = check(applied, items, blocks, z);
-            if (!overlapsOther && !alreadyHasSecondHold) {
-              expect(result).toEqual({ ok: true });
-            } else if (overlapsOther && !alreadyHasSecondHold) {
-              expect(result).toEqual({ ok: false, reason: "overlaps-existing" });
-            } else if (!overlapsOther && alreadyHasSecondHold) {
-              expect(result).toEqual({ ok: false, reason: "provisional-already-has-second-hold" });
-            } else {
-              expect(result.ok).toBe(false);
-              const reasons: readonly SecondHoldRejection[] = [
-                "overlaps-existing",
-                "provisional-already-has-second-hold",
-              ];
-              expect(reasons).toContain(result.ok ? undefined : result.reason);
-            }
-          },
-        ),
-        // 「その仮予約にはすでに第二キープがある」だけに当たる入力は少ない（前提を満たす入力の2%ほど）ので、回数を増やす
-        { numRuns: 1000 },
       );
     });
 
     // 重ならない予約とブロック枠から始めて、第二キープの申込を順に受け付ける（受け付けたものは承認待ちか、承認して第二キープにする）。
-    // どの順でも、第二キープと仮予約1件の組を除いて占有区間は重ならず、仮予約1件に重なる第二キープは1件まで
+    // どの順でも、第二キープと仮予約1件の組を除いて占有区間は重ならない（第二キープどうしも、承認待ちを含めて重ならない）。
+    // 1件の仮予約に、重ならない第二キープが何件付いてもよい
     it("第二キープの申込を続けて受け付けても、INV-1 は崩れない", () => {
       const initialStatus = fc.constantFrom<ReservationStatus>(
         "pending-provisional",
@@ -453,12 +454,6 @@ describe("第二キープ", () => {
                 expect(occupiedOverlaps(a.shape, block), `${a.status} とブロック枠が重なる`).toBe(
                   false,
                 );
-              }
-              if (a.status === "provisional") {
-                const secondHolds = items.filter(
-                  ({ shape, status }) => isSecondHold(status) && occupiedOverlaps(a.shape, shape),
-                );
-                expect(secondHolds.length).toBeLessThanOrEqual(1);
               }
             }
           },
