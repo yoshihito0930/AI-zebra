@@ -25,3 +25,15 @@ export type {
   CancellationFeeInput,
   CancellationFeeRatePercent,
 } from "./cancellation-fee";
+export { checkAvailability, checkBufferChange, occupiedRange } from "./availability";
+export type {
+  AvailabilityInput,
+  AvailabilityResult,
+  BufferChangeInput,
+  BufferChangeResult,
+  BufferMinutes,
+  ExistingBlock,
+  ExistingReservation,
+  ReservationBufferMinutes,
+  TimeRange,
+} from "./availability";
