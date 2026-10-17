@@ -3,3 +3,4 @@
 # ここにあるテストは pnpm test / pnpm test:int から外れる。実装のPRで、その行を消す。
 # CI（expected-failures）は、ここにあるテストが本当に失敗するかを確かめる。通るようになったら消さないと失敗する。
 # 実装のPRで既存のテストをここに足すことはできない（test-tamper が止める）。
+packages/booking-core/src/pricing.test.ts
