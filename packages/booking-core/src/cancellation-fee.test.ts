@@ -71,6 +71,10 @@ const rows = {
     amount: 27_500,
     cancelledAt: "2026-10-16T12:00",
   },
+  // 当日＝10/20。開始 07:00 より前
+  pendingFirmOnTheDay: { status: "pending-firm", amount: 27_500, cancelledAt: "2026-10-20T06:00" },
+  // 当日＝10/20。開始 07:00 より前
+  secondHoldOnTheDay: { status: "second-hold", amount: 27_500, cancelledAt: "2026-10-20T06:00" },
 } satisfies Record<string, Row>;
 
 describe("取消とキャンセル料", () => {
@@ -122,6 +126,14 @@ describe("取消とキャンセル料", () => {
     expect(feeOf(rows.provisionalPastDeadline, jst)).toEqual(expected(0, 0));
   });
 
+  it("承認待ち（本）の申込を当日に取消：キャンセル料なし（承認待ちは無料）", () => {
+    expect(feeOf(rows.pendingFirmOnTheDay, jst)).toEqual(expected(0, 0));
+  });
+
+  it("第二キープを当日に取消：キャンセル料なし（第二キープは無料）", () => {
+    expect(feeOf(rows.secondHoldOnTheDay, jst)).toEqual(expected(0, 0));
+  });
+
   // 上の各行を、同じ時点の UTC で渡す（開始は 10/19 22:00 UTC）。期待値は表の行のまま
   describe("UTC で渡しても同じ結果（INV-7）", () => {
     it("取消 10/13 23:59：キャンセル料なし（7日前）", () => {
@@ -170,6 +182,14 @@ describe("取消とキャンセル料", () => {
 
     it("期限を過ぎて仮予約のままの予約を 10/16 に取消：キャンセル料なし（仮予約は無料）", () => {
       expect(feeOf(rows.provisionalPastDeadline, utc)).toEqual(expected(0, 0));
+    });
+
+    it("承認待ち（本）の申込を当日に取消：キャンセル料なし（承認待ちは無料）", () => {
+      expect(feeOf(rows.pendingFirmOnTheDay, utc)).toEqual(expected(0, 0));
+    });
+
+    it("第二キープを当日に取消：キャンセル料なし（第二キープは無料）", () => {
+      expect(feeOf(rows.secondHoldOnTheDay, utc)).toEqual(expected(0, 0));
     });
   });
 
