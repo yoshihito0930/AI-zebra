@@ -11,6 +11,13 @@ export type {
 } from "./application-deadline";
 export { calculatePrice } from "./pricing";
 export type { Plan, PriceInput, PriceQuote, PricingOptions } from "./pricing";
+export { calculatePriceFromTable, decidePlanId } from "./price-table-pricing";
+export type {
+  PlanDecisionInput,
+  PriceTableQuote,
+  PriceTableQuoteInput,
+} from "./price-table-pricing";
+export { currentPriceTable } from "./current-price-table";
 export { calculateCancellationFee } from "./cancellation-fee";
 export type {
   CancellableStatus,
