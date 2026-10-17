@@ -1,4 +1,5 @@
 import type { DateTime } from "luxon";
+import { provisionalDeadline } from "./provisional-deadline";
 
 // 申込の種類（docs/product-specs/booking.md の「申込の締め切り」）。firm＝本予約申込、provisional＝仮予約申込。
 // 第二キープ申込の締め切りは仕様の未決事項なので、ここには入れない。
@@ -22,10 +23,37 @@ export interface ApplicationDeadlineInput {
   appliedAt: DateTime;
 }
 
+// 本予約申込は、開始の24時間前まで
+const FIRM_HOURS_BEFORE_START = 24;
+
 // 申込日時が、申込の種類ごとの締め切りの前かを判定する。判定は JST で行う（INV-7）。
+//
+// 締め切りは時点で比べるので、渡された DateTime のゾーンによらない（JST の日付が要る仮予約の期限は
+// provisionalDeadline の中で JST に直して求める）。
+// ちょうど締め切りの時刻は「過ぎた」側に入れる（半開区間。appliedAt < 締め切り のときだけ受付）。
+// 申込日時が開始より後の場合も、締め切りを過ぎているので同じ理由で不可になる。
 export function checkApplicationDeadline(
   input: ApplicationDeadlineInput,
 ): ApplicationDeadlineResult {
-  void input;
-  throw new Error("未実装");
+  const { kind, start, appliedAt } = input;
+
+  switch (kind) {
+    case "firm": {
+      const deadline = start.minus({ hours: FIRM_HOURS_BEFORE_START });
+      return isBefore(appliedAt, deadline)
+        ? { ok: true }
+        : { ok: false, reason: "past-24-hours-before-start" };
+    }
+    case "provisional": {
+      const deadline = provisionalDeadline(start);
+      return isBefore(appliedAt, deadline)
+        ? { ok: true }
+        : { ok: false, reason: "past-provisional-deadline" };
+    }
+  }
+}
+
+// a が b より前の時点か（ゾーンによらず、時点で比べる）
+function isBefore(a: DateTime, b: DateTime): boolean {
+  return a.toMillis() < b.toMillis();
 }
