@@ -90,10 +90,11 @@ function pathsInCommand(command) {
  * @param {string | undefined} toolName
  * @param {Record<string, unknown> | undefined} toolInput
  * @param {string} repoRoot
- * @param {(repoPath: string) => boolean} [exists] ファイルがすでにあるか（テスト担当がスタブを新しく作れるかの判定に使う）
+ * @param {(repoPath: string) => boolean} [exists] ファイルが作業ツリーにあるか
+ * @param {(repoPath: string) => boolean} [onMain] ファイルが main にあるか。テスト担当は、main にない実装ファイル（そのブランチで作ったスタブ）だけを読み書きできる
  * @returns {string | undefined}
  */
-export function decide(role, toolName, toolInput, repoRoot, exists = () => true) {
+export function decide(role, toolName, toolInput, repoRoot, exists = () => true, onMain = exists) {
   /** @type {Record<string, unknown>} */
   const input = toolInput ?? {};
 
@@ -116,9 +117,18 @@ export function decide(role, toolName, toolInput, repoRoot, exists = () => true)
   }
 
   if (role === "test-writer") {
+    // そのブランチで作ったスタブ（main になく、作業ツリーにある実装ファイル）は、読み書きしてよい。
+    // ないファイルは含めない（起動時の自己確認で、ないファイルの Read が止まることを使っているため）
+    /** @param {string} p */
+    const ownStub = (p) => isImplementation(p) && !onMain(p) && exists(p);
     if (toolName === "Read") {
       const p = toRepoPath(input.file_path, repoRoot);
-      if (p !== undefined && isImplementation(p) && !READABLE_FOR_TEST_WRITER.test(p)) {
+      if (
+        p !== undefined &&
+        isImplementation(p) &&
+        !READABLE_FOR_TEST_WRITER.test(p) &&
+        !ownStub(p)
+      ) {
         return `テスト担当は実装（${p}）を読まない。テストは仕様（docs/product-specs）と契約（packages/contracts）だけから書く（docs/TESTING.md）`;
       }
     }
@@ -128,16 +138,20 @@ export function decide(role, toolName, toolInput, repoRoot, exists = () => true)
         return undefined;
       }
       const p = toRepoPath(filePath, repoRoot);
-      // 新しい実装ファイル（スタブ）を Write で作ることだけは許す。既存の実装は変更できない
-      const newStub = p !== undefined && toolName === "Write" && isImplementation(p) && !exists(p);
-      if (p === undefined || !(isTestFile(p) || WRITABLE_FOR_TEST_WRITER.test(p) || newStub)) {
-        return `テスト担当が書けるのは、テストファイル・新しいスタブ・例の網羅の保留リスト・失敗予定リスト・仕様の未決事項だけ（${p ?? "リポジトリの外"}）`;
+      // 新しい実装ファイル（スタブ）を Write で作ることと、そのブランチで作ったスタブを直すことは許す。
+      // main にある実装は変更できない
+      const stub =
+        p !== undefined &&
+        isImplementation(p) &&
+        ((toolName === "Write" && !exists(p) && !onMain(p)) || ownStub(p));
+      if (p === undefined || !(isTestFile(p) || WRITABLE_FOR_TEST_WRITER.test(p) || stub)) {
+        return `テスト担当が書けるのは、テストファイル・新しいスタブ（main にない実装ファイル）・例の網羅の保留リスト・失敗予定リスト・仕様の未決事項だけ（${p ?? "リポジトリの外"}）`;
       }
     }
     if (toolName === "Bash" && typeof input.command === "string") {
       for (const segment of segmentsOf(input.command)) {
         const impl = pathsInCommand(segment).filter(
-          (p) => isImplementation(p) && !READABLE_FOR_TEST_WRITER.test(p),
+          (p) => isImplementation(p) && !READABLE_FOR_TEST_WRITER.test(p) && !ownStub(p),
         );
         if (impl.length > 0 && READ_COMMANDS.test(segment)) {
           return `テスト担当は実装（${impl.join(", ")}）を読まない（docs/TESTING.md）`;
