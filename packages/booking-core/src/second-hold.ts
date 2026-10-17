@@ -14,10 +14,9 @@ export interface SecondHoldApplication {
 
 /**
  * 不可の理由
- * - overlaps-existing：申込の占有区間が、承認済みの仮予約（provisional）以外の、枠を確保している予約（承認待ち・本予約・ほかの第二キープ）かブロック枠の占有区間と重なる
- * - provisional-already-has-second-hold：申込の占有区間が重なる仮予約に、枠を確保している第二キープ（承認待ちを含む）がすでに1件ある
+ * - overlaps-existing：申込の占有区間が、承認済みの仮予約（provisional）以外の、枠を確保している予約（承認待ち・本予約・ほかの第二キープ〔承認待ちを含む〕）かブロック枠の占有区間と重なる
  */
-export type SecondHoldRejection = "overlaps-existing" | "provisional-already-has-second-hold";
+export type SecondHoldRejection = "overlaps-existing";
 
 export type SecondHoldApplicationResult = { ok: true } | { ok: false; reason: SecondHoldRejection };
 
