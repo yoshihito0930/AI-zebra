@@ -8,7 +8,7 @@ import { jstDate, usageDate } from "./jst-time";
 /** 取消せる予約の状態。取消・終了の予約は、さらに取消さない */
 export type CancellableStatus = Exclude<ReservationStatus, "cancelled" | "ended">;
 
-/** キャンセル料の率。整数のパーセント（INV-9。浮動小数にしない）。0 は「なし」 */
+/** キャンセル料の率。整数のパーセント（INV-9。浮動小数にしない）。0 は「なし」（本予約以外の取消だけ） */
 export type CancellationFeeRatePercent = 0 | 50 | 80 | 100;
 
 export interface CancellationFeeInput {
@@ -32,7 +32,8 @@ export interface CancellationFee {
 /**
  * 取消のキャンセル料を計算する。
  * - 本予約（firm）だけが対象。承認待ち・仮予約・第二キープは、いつ取消しても率 0（無料）
- * - 本予約の率は、取消の日（JST）が利用日（開始の JST の日付）の何日前かで決める（0:00 で切り替わる）
+ * - 本予約の率は、取消の日（JST）が利用日（開始の JST の日付）の何日前かで決める（0:00 で切り替わる）。
+ *   4日以上前は 50%、3日前〜前日は 80%、当日は 100%。本予約には無料の期間がない
  * - 日時のゾーンは問わない（JST に直してから日付を取る）
  *
  * 本予約を開始以降（利用中・利用後）に取消す場合の扱いは、仕様の未決事項
@@ -65,13 +66,13 @@ function daysBeforeUsageDate(start: DateTime, cancelledAt: DateTime): number {
   return usageDate(start).diff(jstDate(cancelledAt), "days").days;
 }
 
-// 率の表（booking.md「取消とキャンセル料」）。上から順に、何日前以上ならその率か
+// 本予約の率の表（booking.md「取消とキャンセル料」）。上から順に、何日前以上ならその率か。
+// 本予約の率は 0 にならない（本予約には無料で取消せる期間がない）
 const RATE_TABLE: readonly {
   readonly minDaysBefore: number;
   readonly ratePercent: CancellationFeeRatePercent;
 }[] = [
-  { minDaysBefore: 7, ratePercent: 0 }, // 利用日の7日以上前：なし
-  { minDaysBefore: 4, ratePercent: 50 }, // 6日前〜4日前
+  { minDaysBefore: 4, ratePercent: 50 }, // 利用日の4日以上前（本予約には無料の期間がない）
   { minDaysBefore: 1, ratePercent: 80 }, // 3日前〜前日
   { minDaysBefore: 0, ratePercent: 100 }, // 利用日当日
 ];
