@@ -11,3 +11,10 @@ export type {
 } from "./application-deadline";
 export { calculatePrice } from "./pricing";
 export type { Plan, PriceInput, PriceQuote, PricingOptions } from "./pricing";
+export { calculateCancellationFee } from "./cancellation-fee";
+export type {
+  CancellableStatus,
+  CancellationFee,
+  CancellationFeeInput,
+  CancellationFeeRatePercent,
+} from "./cancellation-fee";
