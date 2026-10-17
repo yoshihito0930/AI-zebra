@@ -24,7 +24,8 @@ function utc(iso: string): DateTime {
 
 // 例の「利用日が 10/20 の本予約」の開始日時。例には開始の時刻がないので 07:00 とする。
 // 07:00 JST は UTC では 10/19 22:00 で、UTC の日付が 10/19 になる。利用日を UTC の日付で取る誤り
-// （利用日が 10/19 になり、10/13 23:59 の取消が 6日前の 50% になる）を、例の行で見つけるため。
+// （利用日が 10/19 になり、10/16 12:00 の取消が 3日前の 80%、10/19 23:59 の取消が当日の 100% になる）を、
+// 例の行で見つけるため。
 // 当日の取消（10/20 00:00 など）も、開始より前（利用中・利用後の取消は未決事項）になる
 const start = "2026-10-20T07:00";
 
@@ -78,8 +79,8 @@ const rows = {
 } satisfies Record<string, Row>;
 
 describe("取消とキャンセル料", () => {
-  it("取消 10/13 23:59：キャンセル料なし（7日前）", () => {
-    expect(feeOf(rows.oct13At2359, jst)).toEqual(expected(0, 0));
+  it("取消 10/13 23:59：キャンセル料 13,750円（50%。7日前）", () => {
+    expect(feeOf(rows.oct13At2359, jst)).toEqual(expected(13_750, 50));
   });
 
   it("取消 10/14 00:00：キャンセル料 13,750円（50%）", () => {
@@ -118,8 +119,8 @@ describe("取消とキャンセル料", () => {
     expect(feeOf(rows.provisionalOct13, jst)).toEqual(expected(0, 0));
   });
 
-  it("10/13 12:00 に本予約へ昇格した予約を、同じ 10/13 の 20:00 に取消：キャンセル料なし（7日前）", () => {
-    expect(feeOf(rows.promotedThenCancelled, jst)).toEqual(expected(0, 0));
+  it("10/13 12:00 に本予約へ昇格した予約を、同じ 10/13 の 20:00 に取消：キャンセル料 13,750円（50%。7日前。本予約には無料の期間がない）", () => {
+    expect(feeOf(rows.promotedThenCancelled, jst)).toEqual(expected(13_750, 50));
   });
 
   it("期限を過ぎて仮予約のままの予約を 10/16 に取消：キャンセル料なし（仮予約は無料）", () => {
@@ -136,8 +137,8 @@ describe("取消とキャンセル料", () => {
 
   // 上の各行を、同じ時点の UTC で渡す（開始は 10/19 22:00 UTC）。期待値は表の行のまま
   describe("UTC で渡しても同じ結果（INV-7）", () => {
-    it("取消 10/13 23:59：キャンセル料なし（7日前）", () => {
-      expect(feeOf(rows.oct13At2359, utc)).toEqual(expected(0, 0));
+    it("取消 10/13 23:59：キャンセル料 13,750円（50%。7日前）", () => {
+      expect(feeOf(rows.oct13At2359, utc)).toEqual(expected(13_750, 50));
     });
 
     it("取消 10/14 00:00：キャンセル料 13,750円（50%）", () => {
@@ -176,8 +177,8 @@ describe("取消とキャンセル料", () => {
       expect(feeOf(rows.provisionalOct13, utc)).toEqual(expected(0, 0));
     });
 
-    it("10/13 12:00 に本予約へ昇格した予約を、同じ 10/13 の 20:00 に取消：キャンセル料なし（7日前）", () => {
-      expect(feeOf(rows.promotedThenCancelled, utc)).toEqual(expected(0, 0));
+    it("10/13 12:00 に本予約へ昇格した予約を、同じ 10/13 の 20:00 に取消：キャンセル料 13,750円（50%。7日前。本予約には無料の期間がない）", () => {
+      expect(feeOf(rows.promotedThenCancelled, utc)).toEqual(expected(13_750, 50));
     });
 
     it("期限を過ぎて仮予約のままの予約を 10/16 に取消：キャンセル料なし（仮予約は無料）", () => {
@@ -236,7 +237,8 @@ describe("取消とキャンセル料", () => {
       });
     }
 
-    // 仕様の表：取消の日（JST）が利用日（開始の JST の日付）の何日前か
+    // 仕様の表：取消の日（JST）が利用日（開始の JST の日付）の何日前か。
+    // 本予約には無料の期間がないので、4日以上前は何日前でも 50%
     function expectedRatePercent(c: Cancellation): CancellationFeeRatePercent {
       if (c.status !== "firm") {
         return 0;
@@ -244,7 +246,6 @@ describe("取消とキャンセル料", () => {
       const usageDay = startOf(c).setZone("Asia/Tokyo").startOf("day");
       const cancelDay = cancelledAtOf(c).setZone("Asia/Tokyo").startOf("day");
       const daysBefore = Math.round(usageDay.diff(cancelDay, "days").days);
-      if (daysBefore >= 7) return 0;
       if (daysBefore >= 4) return 50;
       if (daysBefore >= 1) return 80;
       return 100;
@@ -276,6 +277,17 @@ describe("取消とキャンセル料", () => {
         fc.property(cancellation, (c) => {
           expect(feeFor(c).ratePercent).toBe(expectedRatePercent(c));
         }),
+      );
+    });
+
+    it("本予約の率は 0 にならない（本予約には無料の期間がない）", () => {
+      fc.assert(
+        fc.property(
+          cancellation.filter((c) => c.status === "firm"),
+          (c) => {
+            expect(feeFor(c).ratePercent).not.toBe(0);
+          },
+        ),
       );
     });
 
