@@ -32,6 +32,9 @@ describe("実装担当のガード", () => {
     "echo x > packages/booking-core/src/availability.test.ts",
     "rm packages/booking-core/src/availability.test.ts",
     "git checkout main -- packages/booking-core/src/availability.test.ts",
+    "pnpm check && echo x >> packages/booking-core/src/availability.test.ts",
+    "cat <<'EOF' > packages/booking-core/src/availability.test.ts\nx\nEOF",
+    ": hook-check.test.ts > /dev/null",
   ])("シェルからテストファイルを変更するコマンドは止める：%s", (command) => {
     expect(d("Bash", { command })).toMatch(/テストファイル/);
   });
@@ -40,9 +43,22 @@ describe("実装担当のガード", () => {
     "pnpm test",
     "cat packages/booking-core/src/availability.test.ts",
     "pnpm vitest run packages/booking-core/src/availability.test.ts",
+    "pnpm vitest run packages/booking-core/src/availability.test.ts 2>&1 | tail -20",
   ])("テストを読む・動かすコマンドは許す：%s", (command) => {
     expect(d("Bash", { command })).toBeUndefined();
   });
+
+  // 2026-10-17 に実際に止まったコマンド（docs/harness-log.md）
+  it.each([
+    "sed -i '\\#^packages/booking-core/src/time-unit-and-duration.test.ts$#d' harness/expected-failures.txt; cat harness/expected-failures.txt",
+    "git add -A && git commit -q -F - <<'EOF'\nfeat: x\n\ntime-unit-and-duration.test.ts を失敗予定リストから外す\nEOF\ngit push 2>&1 | tail -2",
+    "cat >> docs/harness-log.md <<'EOF'\n- packages/booking-core/src/time-unit-and-duration.test.ts を消す `sed -i`\nEOF",
+  ])(
+    "テストのパスが、書き換え先ではなく引用符やヒアドキュメントの中にあるだけなら許す：%s",
+    (command) => {
+      expect(d("Bash", { command })).toBeUndefined();
+    },
+  );
 });
 
 describe("テスト担当のガード", () => {
@@ -89,6 +105,7 @@ describe("テスト担当のガード", () => {
   it.each([
     "cat packages/booking-core/src/availability.ts",
     "grep -n availability apps/api/src/app.ts",
+    "pnpm test && cat packages/booking-core/src/availability.ts",
   ])("シェルから実装を読むコマンドは止める：%s", (command) => {
     expect(d("Bash", { command })).toMatch(/実装/);
   });
@@ -97,8 +114,25 @@ describe("テスト担当のガード", () => {
     "pnpm test",
     "cat packages/contracts/src/index.ts",
     "pnpm vitest run packages/booking-core",
+    // 2026-10-17 に実際に止まったコマンド（docs/harness-log.md）
+    "git add packages/booking-core/src/time-unit-and-duration.ts harness/expected-failures.txt && git push 2>&1 | tail -2",
+    'gh pr create --body "スタブ：packages/booking-core/src/time-unit-and-duration.ts" | head -1',
   ])("テストの実行や契約を読むコマンドは許す：%s", (command) => {
     expect(d("Bash", { command })).toBeUndefined();
+  });
+
+  it("スクラッチパッドに書くのは許す（PR 本文の下書きなど）", () => {
+    expect(
+      d("Write", { file_path: "/tmp/claude-0/-repo/3dbb3d1e/scratchpad/pr-body.md" }),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    "/root/.claude/settings.json",
+    "/tmp/claude-0/-repo/3dbb3d1e/scratchpad/../../../../root/.claude/settings.json",
+    "/tmp/claude-0/-repo/3dbb3d1e/tasks/x.md",
+  ])("スクラッチパッド以外のリポジトリの外 %s は止める", (file) => {
+    expect(d("Write", { file_path: file })).toMatch(/書けるのは/);
   });
 });
 

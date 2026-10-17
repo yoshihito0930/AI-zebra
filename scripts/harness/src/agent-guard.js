@@ -3,8 +3,10 @@
 // フックは非対話のシェルで動き、nvm の Node 24 ではなく古い Node で実行されることがあるため、
 // TypeScript や新しい Node の機能を使わない素の JavaScript で書く。
 //
-// これは「うっかり」を止めるための仕組みで、シェル経由の回り道（スクリプトの中でファイルを開くなど）までは止められない。
+// これは「うっかり」を止めるための仕組みで、シェル経由の回り道（スクリプトの中でファイルを開く、パスを引用符で囲むなど）までは止められない。
 // 実装担当がテストを変えた場合は、CI のテストの改ざん防止（test-tamper）が最後に止める。
+
+import path from "node:path";
 
 const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 const CODE_FILE = /\.([cm]?[jt]sx?|astro)$/;
@@ -15,11 +17,14 @@ const READABLE_FOR_TEST_WRITER = /^packages\/contracts\//;
 const WRITABLE_FOR_TEST_WRITER =
   /^(harness\/spec-coverage-pending\.txt|harness\/expected-failures\.txt|docs\/product-specs\/.+\.md)$/;
 
+// テスト担当が書いてよい、リポジトリの外の場所（Claude Code のスクラッチパッド。PR 本文やコミットメッセージの下書きに使う）
+const SCRATCHPAD = /^\/tmp\/claude-[^/]+\/[^/]+\/[^/]+\/scratchpad\//;
+
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const READ_COMMANDS =
   /(^|[\s;&|(])(cat|head|tail|less|more|grep|rg|sed|awk|bat|nl|od|xxd|strings)\s/;
 const WRITE_HINTS =
-  /(sed\s+-i|perl\s+-i|>\s*\S|\btee\b|\brm\b|\bmv\b|\bcp\b|\btruncate\b|\bgit\s+(checkout|restore|apply)\b)/;
+  /(sed\s+-i|perl\s+-i|>(?!&)\s*\S|\btee\b|\brm\b|\bmv\b|\bcp\b|\btruncate\b|\bgit\s+(checkout|restore|apply)\b)/;
 
 /**
  * 絶対パスをリポジトリからの相対パスにする（リポジトリの外なら undefined）
@@ -46,7 +51,24 @@ export function isImplementation(p) {
 }
 
 /**
- * コマンドの中から、リポジトリ内のファイルらしい語を拾う
+ * コマンドを、判定に使う部分（&& ; | などで区切った1つずつのコマンド）に分ける。
+ * ヒアドキュメントの本文と引用符の中は取り除く。コミットメッセージや sed の式の中にパスが出てきても、
+ * そのファイルを読む・書くわけではないため
+ * @param {string} command
+ * @returns {string[]}
+ */
+function segmentsOf(command) {
+  // 開始の記号と同じ行の残り（書き込み先など）は残し、本文だけを消す
+  const withoutHeredocs = command.replace(
+    /<<-?[ \t]*(['"]?)(\w+)\1([^\n]*)\n(?:[\s\S]*?\n)?[ \t]*\2[ \t]*(?=\n|$)/g,
+    " $3",
+  );
+  const withoutQuotes = withoutHeredocs.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''");
+  return withoutQuotes.split(/&&|\|\||[;|\n]/);
+}
+
+/**
+ * コマンドの1つの部分から、リポジトリ内のファイルらしい語を拾う
  * @param {string} command
  * @returns {string[]}
  */
@@ -78,9 +100,11 @@ export function decide(role, toolName, toolInput, repoRoot, exists = () => true)
       }
     }
     if (toolName === "Bash" && typeof input.command === "string") {
-      const tests = pathsInCommand(input.command).filter(isTestFile);
-      if (tests.length > 0 && WRITE_HINTS.test(input.command)) {
-        return `実装担当はシェルからテストファイル（${tests.join(", ")}）を変更できない（docs/TESTING.md）`;
+      for (const segment of segmentsOf(input.command)) {
+        const tests = pathsInCommand(segment).filter(isTestFile);
+        if (tests.length > 0 && WRITE_HINTS.test(segment)) {
+          return `実装担当はシェルからテストファイル（${tests.join(", ")}）を変更できない（docs/TESTING.md）`;
+        }
       }
     }
     return undefined;
@@ -94,7 +118,11 @@ export function decide(role, toolName, toolInput, repoRoot, exists = () => true)
       }
     }
     if (EDIT_TOOLS.has(toolName ?? "")) {
-      const p = toRepoPath(input.file_path ?? input.notebook_path, repoRoot);
+      const filePath = input.file_path ?? input.notebook_path;
+      if (typeof filePath === "string" && SCRATCHPAD.test(path.posix.normalize(filePath))) {
+        return undefined;
+      }
+      const p = toRepoPath(filePath, repoRoot);
       // 新しい実装ファイル（スタブ）を Write で作ることだけは許す。既存の実装は変更できない
       const newStub = p !== undefined && toolName === "Write" && isImplementation(p) && !exists(p);
       if (p === undefined || !(isTestFile(p) || WRITABLE_FOR_TEST_WRITER.test(p) || newStub)) {
@@ -102,11 +130,13 @@ export function decide(role, toolName, toolInput, repoRoot, exists = () => true)
       }
     }
     if (toolName === "Bash" && typeof input.command === "string") {
-      const impl = pathsInCommand(input.command).filter(
-        (p) => isImplementation(p) && !READABLE_FOR_TEST_WRITER.test(p),
-      );
-      if (impl.length > 0 && READ_COMMANDS.test(input.command)) {
-        return `テスト担当は実装（${impl.join(", ")}）を読まない（docs/TESTING.md）`;
+      for (const segment of segmentsOf(input.command)) {
+        const impl = pathsInCommand(segment).filter(
+          (p) => isImplementation(p) && !READABLE_FOR_TEST_WRITER.test(p),
+        );
+        if (impl.length > 0 && READ_COMMANDS.test(segment)) {
+          return `テスト担当は実装（${impl.join(", ")}）を読まない（docs/TESTING.md）`;
+        }
       }
     }
     return undefined;
