@@ -9,8 +9,6 @@ export type {
   ApplicationDeadlineViolation,
   ApplicationKind,
 } from "./application-deadline";
-export { calculatePrice } from "./pricing";
-export type { Plan, PriceInput, PriceQuote, PricingOptions } from "./pricing";
 export { calculatePriceFromTable, decidePlanId } from "./price-table-pricing";
 export type {
   PlanDecisionInput,
