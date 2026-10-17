@@ -23,6 +23,11 @@ const SCRATCHPAD = /^\/tmp\/claude-[^/]+\/[^/]+\/[^/]+\/scratchpad\//;
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const READ_COMMANDS =
   /(^|[\s;&|(])(cat|head|tail|less|more|grep|rg|sed|awk|bat|nl|od|xxd|strings)\s/;
+// 依存を変えるパッケージマネージャーのコマンド（引数なしの install は、lockfile どおりに入れるだけなので許す）
+const DEPENDENCY_COMMANDS =
+  /^\s*(pnpm|npm|yarn)\b(?=.*\s((add|remove|rm|uninstall|update|up|upgrade)(\s|$)|(install|i)(\s+-\S+)*\s+[^-\s]))/;
+// 依存を決めるファイル
+const DEPENDENCY_FILES = /(^|[\s/'"])(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)\b/;
 const WRITE_HINTS =
   /(sed\s+-i|perl\s+-i|>(?!&)\s*\S|\btee\b|\brm\b|\bmv\b|\bcp\b|\btruncate\b|\bgit\s+(checkout|restore|apply)\b)/;
 
@@ -136,6 +141,12 @@ export function decide(role, toolName, toolInput, repoRoot, exists = () => true)
         );
         if (impl.length > 0 && READ_COMMANDS.test(segment)) {
           return `テスト担当は実装（${impl.join(", ")}）を読まない（docs/TESTING.md）`;
+        }
+        if (
+          DEPENDENCY_COMMANDS.test(segment) ||
+          (DEPENDENCY_FILES.test(segment) && WRITE_HINTS.test(segment))
+        ) {
+          return "テスト担当は依存を変えない。依存が要るなら、止まって報告する（テストの PR の前に準備の PR を出す。docs/TESTING.md）";
         }
       }
     }
