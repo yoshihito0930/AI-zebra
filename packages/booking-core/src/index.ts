@@ -37,3 +37,9 @@ export type {
   ReservationBufferMinutes,
   TimeRange,
 } from "./availability";
+export { checkSecondHoldApplication } from "./second-hold";
+export type {
+  SecondHoldApplication,
+  SecondHoldApplicationResult,
+  SecondHoldRejection,
+} from "./second-hold";
