@@ -178,6 +178,41 @@ describe("テスト担当のスタブ", () => {
   });
 });
 
+describe("テスト担当が、そのブランチで作ったスタブを直す", () => {
+  // fee.ts は main にある実装。second-hold.ts はこのブランチで作ったスタブ（作業ツリーにあり、main にない）
+  const inTree = new Set([
+    "packages/booking-core/src/fee.ts",
+    "packages/booking-core/src/second-hold.ts",
+  ]);
+  const exists = (p: string) => inTree.has(p);
+  const onMain = (p: string) => p === "packages/booking-core/src/fee.ts";
+  const d = (tool: string, input: Record<string, unknown>) =>
+    decide("test-writer", tool, input, root, exists, onMain);
+  const stub = "/repo/packages/booking-core/src/second-hold.ts";
+  const onMainImpl = "/repo/packages/booking-core/src/fee.ts";
+
+  it.each(["Read", "Edit", "Write"])("そのブランチのスタブは %s してよい", (tool) => {
+    expect(d(tool, { file_path: stub })).toBeUndefined();
+  });
+
+  it("そのブランチのスタブは、シェルから読んでよい", () => {
+    expect(d("Bash", { command: "cat packages/booking-core/src/second-hold.ts" })).toBeUndefined();
+  });
+
+  it("main にある実装は、読むのも書くのも止める", () => {
+    expect(d("Read", { file_path: onMainImpl })).toMatch(/読まない/);
+    expect(d("Edit", { file_path: onMainImpl })).toMatch(/書けるのは/);
+    expect(d("Write", { file_path: onMainImpl })).toMatch(/書けるのは/);
+    expect(d("Bash", { command: "cat packages/booking-core/src/fee.ts" })).toMatch(/読まない/);
+  });
+
+  it("ないファイルの Read は止める（起動時の自己確認で使う）", () => {
+    expect(d("Read", { file_path: "/repo/packages/booking-core/src/hook-check.ts" })).toMatch(
+      /読まない/,
+    );
+  });
+});
+
 describe("役割の指定", () => {
   it("知らない役割は止める", () => {
     expect(decide("unknown", "Read", { file_path: "/repo/x" }, root)).toMatch(/不明な役割/);
