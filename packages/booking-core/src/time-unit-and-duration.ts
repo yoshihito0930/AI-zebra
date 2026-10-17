@@ -1,5 +1,6 @@
 // 時間の単位と利用時間（docs/product-specs/booking.md「時間の単位と利用時間」）
 import type { DateTime } from "luxon";
+import { DAYTIME_END_HOUR, DAYTIME_START_HOUR, JST, isOn30MinuteBoundary } from "./jst-time";
 
 /**
  * 予約不可の理由。
@@ -17,17 +18,10 @@ export type TimeUnitRejectionReason =
 /** 予約可か、予約不可とその理由 */
 export type TimeUnitCheckResult = { ok: true } | { ok: false; reason: TimeUnitRejectionReason };
 
-// 判定に使うタイムゾーン（INV-7）
-const JST = "Asia/Tokyo";
-
 const MINUTES_PER_HOUR = 60;
 const MIN_MINUTES = 2 * MINUTES_PER_HOUR;
 const LATE_NIGHT_MIN_MINUTES = 4 * MINUTES_PER_HOUR;
 const MAX_MINUTES = 24 * MINUTES_PER_HOUR;
-
-// 通常帯は 8:00〜23:00。それ以外が深夜帯（booking.md「用語」）
-const DAYTIME_START_HOUR = 8;
-const DAYTIME_END_HOUR = 23;
 
 /**
  * 申込の予約区間 [start, end) が、時間の単位と利用時間のルールを満たすかを判定する。
@@ -60,11 +54,6 @@ export function checkTimeUnitAndDuration(start: DateTime, end: DateTime): TimeUn
     return { ok: false, reason: "shorter-than-2-hours" };
   }
   return { ok: true };
-}
-
-// JST の毎時 :00 か :30 ちょうど（秒・ミリ秒も 0）か
-function isOn30MinuteBoundary(dateTime: DateTime): boolean {
-  return dateTime.minute % 30 === 0 && dateTime.second === 0 && dateTime.millisecond === 0;
 }
 
 /**
