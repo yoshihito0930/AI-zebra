@@ -55,6 +55,7 @@ export type ReservationChangeFailureReason = "overlaps-existing" | "not-found" |
 /**
  * 変更の結果。成功なら
  * - reservations：変更のあとの予約すべて（並び順は引数の reservations のまま）。変更した予約は、予約区間と確定金額だけが変わる（状態は変えない）
+ *   仮予約を動かして重ならなくなった第二キープ（承認待ちを含む）は、付く仮予約の id からその仮予約を外す（ほかは変えない。reservation-model.md「第二キープと仮予約」）
  * - released：解放する枠。secured：確保する枠。どちらも、枠を確保している予約の占有区間の、変更の前後の差
  *   （開始の早い順。重なる区間・接する区間はつなぐ）。1トランザクションで書く（INV-2）
  * - estimate：変更後の内容で、料金表で再計算した見積

@@ -172,6 +172,18 @@ function expectUnchanged(after: Reservation, before: Reservation, message: strin
   expect(after.confirmedAmount, message).toBe(before.confirmedAmount);
 }
 
+// 仮予約を動かして重ならなくなった第二キープは、その仮予約に付かなくなる（付く仮予約の id から外す）。
+// それ以外（状態・予約区間・バッファ・確定金額）は変わらない（reservation-model.md「第二キープと仮予約」）
+function expectDetached(
+  after: Reservation,
+  before: Reservation,
+  provisionalIds: readonly string[],
+  message: string,
+): void {
+  expectUnchanged({ ...after, provisionalIds: before.provisionalIds }, before, message);
+  expect(after.provisionalIds, `${message}、付く仮予約の id`).toEqual(provisionalIds);
+}
+
 describe("予約の変更", () => {
   describe("本予約 A が 10/20 10:00–12:00（占有区間 10:00–13:00、金額 11,000円）の場合。", () => {
     function reservationA(zone: Zone): Reservation {
@@ -366,13 +378,16 @@ describe("予約の変更", () => {
         const p = find(result.reservations, "P");
         expect(p.status, zone).toBe("provisional");
         expectRange(p, oct20("13:30"), oct20("15:30"), zone);
-        expectUnchanged(find(result.reservations, "K"), k, `${zone}、K`);
+        // K は P に付いたまま
+        const kAfter = find(result.reservations, "K");
+        expectUnchanged(kAfter, k, `${zone}、K`);
+        expect(kAfter.provisionalIds, `${zone}、K の付く仮予約の id`).toEqual(["P"]);
         expectDrafts(result.drafts, [{ kind: "change", reservationId: "P" }], zone);
       }
     });
 
-    // K は P に付いたまま（繰り上げのときに仮予約の id を外す。reservation-model.md「状態と操作」）。
-    // 「K の枠は確保されたまま」：解放するのは、10/20 の P の占有区間のうち K と重ならない 13:00–14:00 だけ。
+    // K は P と重ならなくなるので、P に付かなくなる（K の付く仮予約の id から P を外す。reservation-model.md「第二キープと仮予約」）。
+    // 「K の枠は確保されたまま」：K は第二キープのまま。解放するのは、10/20 の P の占有区間のうち K と重ならない 13:00–14:00 だけ。
     // 確保するのは、10/21 の P の占有区間 13:00–16:00
     it("P を翌日 13:00–15:00 に移動：可。P と K が重ならなくなるので、K のお客様への繰り上げ案内の下書きを作る。K の枠は確保されたまま", () => {
       for (const zone of zones) {
@@ -386,7 +401,7 @@ describe("予約の変更", () => {
         const p = find(result.reservations, "P");
         expect(p.status, zone).toBe("provisional");
         expectRange(p, oct21("13:00"), oct21("15:00"), zone);
-        expectUnchanged(find(result.reservations, "K"), k, `${zone}、K`);
+        expectDetached(find(result.reservations, "K"), k, [], `${zone}、K`);
         expectDrafts(
           result.drafts,
           [
@@ -416,15 +431,20 @@ describe("予約の変更", () => {
           confirmedAmount: 22_000,
         });
         expect(find(result.reservations, "P").status, zone).toBe("provisional");
-        expectUnchanged(find(result.reservations, "K"), k, `${zone}、K`);
+        // K は第二キープのまま、P に付いたまま
+        const kAfter = find(result.reservations, "K");
+        expectUnchanged(kAfter, k, `${zone}、K`);
+        expect(kAfter.provisionalIds, `${zone}、K の付く仮予約の id`).toEqual(["P"]);
         expectDrafts(result.drafts, [{ kind: "change", reservationId: "P" }], zone);
       }
     });
 
     // P を 19:00–21:00（占有区間 19:00–22:00）に動かす。K の占有区間 14:00–18:00 とは重ならない。
     // お客様の承諾・辞退はシステムの外（電話・メール）で受けるので、操作は管理者の繰り上げと取消（applyReservationOperation）。
-    // 取消の日時は例にないので 10/10 12:00 とする（第二キープの取消は無料なので、結果に関わらない）
-    it("動かしたあと P と K が重ならなくなった：P が取消になったときと同じ扱い。K のお客様への繰り上げ案内の下書きを作り、承諾を受けたら管理者が K を仮予約に繰り上げる。辞退したら管理者が取消す", () => {
+    // 取消の日時は例にないので 10/10 12:00 とする（仮予約・第二キープの取消は無料なので、結果に関わらない）。
+    // 「それ以降の P の動き（昇格・取消・さらに動かす）」は、変更のあとの状態から、P の昇格・P の取消（applyReservationOperation）・
+    // P をさらに 10/22 13:00–15:00 へ動かす変更を、それぞれ行って確かめる。どれでも K は変わらず、K への下書きもできない
+    it("動かしたあと P と K が重ならなくなった：P が取消になったときと同じ扱い。K は P に付かなくなり、それ以降の P の動き（昇格・取消・さらに動かす）は K に影響しない。K のお客様への繰り上げ案内の下書きを作り、承諾を受けたら管理者が K を仮予約に繰り上げる。辞退したら管理者が取消す", () => {
       for (const zone of zones) {
         const k = reservationK(zone);
         const moved = changeOk(zone, [reservationP(zone), k], {
@@ -434,7 +454,9 @@ describe("予約の変更", () => {
           confirmedAmount: 22_000,
         });
         expect(find(moved.reservations, "P").status, zone).toBe("provisional");
-        expectUnchanged(find(moved.reservations, "K"), k, `${zone}、K`);
+        // K は P に付かなくなる。第二キープのまま枠を確保する
+        const kDetached = find(moved.reservations, "K");
+        expectDetached(kDetached, k, [], `${zone}、K`);
         expectDrafts(
           moved.drafts,
           [
@@ -442,6 +464,52 @@ describe("予約の変更", () => {
             { kind: "move-up-notice", reservationId: "K", remainingProvisionalIds: [] },
           ],
           zone,
+        );
+
+        // それ以降の P の昇格：K は終了せず、第二キープのまま。K への下書きはない。枠は変わらない
+        const promoted = operate(moved.reservations, { kind: "promote", reservationId: "P" });
+        expect(find(promoted.reservations, "P").status, `${zone}、昇格`).toBe("firm");
+        expectUnchanged(find(promoted.reservations, "K"), kDetached, `${zone}、昇格のあとの K`);
+        expect(
+          promoted.drafts.filter((d) => d.reservationId === "K"),
+          `${zone}、昇格の K への下書き`,
+        ).toEqual([]);
+        expectRanges(promoted.released, [], `${zone}、昇格`);
+
+        // それ以降の P の取消：K は変わらない。K への下書きはない。解放するのは P の占有区間 19:00–22:00 だけ
+        const cancelledP = operate(moved.reservations, {
+          kind: "cancel",
+          reservationId: "P",
+          cancelledAt: at("2026-10-10T12:00", zone),
+        });
+        expect(find(cancelledP.reservations, "P").status, `${zone}、P の取消`).toBe("cancelled");
+        expectUnchanged(
+          find(cancelledP.reservations, "K"),
+          kDetached,
+          `${zone}、P の取消のあとの K`,
+        );
+        expect(
+          cancelledP.drafts.filter((d) => d.reservationId === "K"),
+          `${zone}、P の取消の K への下書き`,
+        ).toEqual([]);
+        expectRanges(cancelledP.released, [[oct20("19:00"), oct20("22:00")]], `${zone}、P の取消`);
+
+        // それ以降に P をさらに動かす：K は変わらない。下書きは P の変更の下書きだけ
+        const movedAgain = changeOk(zone, moved.reservations, {
+          id: "P",
+          start: "2026-10-22T13:00",
+          end: "2026-10-22T15:00",
+          confirmedAmount: 22_000,
+        });
+        expectUnchanged(
+          find(movedAgain.reservations, "K"),
+          kDetached,
+          `${zone}、さらに動かしたあとの K`,
+        );
+        expectDrafts(
+          movedAgain.drafts,
+          [{ kind: "change", reservationId: "P" }],
+          `${zone}、さらに動かす`,
         );
 
         // 承諾を受けた：管理者が K を仮予約に繰り上げる
@@ -727,6 +795,19 @@ describe("予約の変更", () => {
 
       const after = result.reservations;
       expect(after.map((r) => r.id)).toEqual(before.map((r) => r.id));
+      // 仮予約を動かして重ならなくなった第二キープ（承認待ちを含む）は、その仮予約に付かなくなる（付く仮予約の id から外す）
+      const nextTarget = { ...next, bufferMinutes: target.bufferMinutes };
+      const detachedIds =
+        target.status === "provisional"
+          ? before
+              .filter(
+                (k) =>
+                  isSecondHold(k.status) &&
+                  k.provisionalIds.includes(target.id) &&
+                  !overlaps(occupied(nextTarget), occupied(k)),
+              )
+              .map((k) => k.id)
+          : [];
       for (const [i, b] of before.entries()) {
         const a = after[i]!;
         if (b.id === target.id) {
@@ -736,6 +817,13 @@ describe("予約の変更", () => {
           expect(a.bufferMinutes).toBe(b.bufferMinutes);
           expect(a.provisionalIds).toEqual(b.provisionalIds);
           expect(a.confirmedAmount).toBe(next.confirmedAmount);
+        } else if (detachedIds.includes(b.id)) {
+          expectDetached(
+            a,
+            b,
+            b.provisionalIds.filter((id) => id !== target.id),
+            `${b.id}（${b.status}）は ${target.id} と重ならなくなった`,
+          );
         } else {
           expectUnchanged(a, b, b.id);
         }
@@ -837,6 +925,7 @@ describe("予約の変更", () => {
       fc.record({
         kind: fc.constant("change-near-second-hold" as const),
         pick: fc.nat(),
+        attachedHold: fc.boolean(),
         offsetSlots: fc.integer({ min: -8, max: 8 }),
         lengthSlots: fc.integer({ min: 4, max: 12 }),
         content: changeContent,
@@ -850,7 +939,7 @@ describe("予約の変更", () => {
       "move-up": ["second-hold"],
     } as const satisfies Record<ReservationOperation["kind"], readonly ReservationStatus[]>;
 
-    it("申込・承認・却下・昇格・取消・繰り上げ・変更のどの列のあとでも、枠を確保している予約の占有区間は、第二キープと承認済みの仮予約の組を除いて重ならない。変更は空き判定を通るときだけ可で、不可なら何も変わらない", () => {
+    it("申込・承認・却下・昇格・取消・繰り上げ・変更のどの列のあとでも、枠を確保している予約の占有区間は、第二キープと承認済みの仮予約の組を除いて重ならない。変更は空き判定を通るときだけ可で、不可なら何も変わらない。仮予約を動かして重ならなくなった第二キープはその仮予約に付かなくなり、それ以降のその仮予約の昇格・取消は第二キープに影響しない", () => {
       fc.assert(
         fc.property(
           fc.array(step, { maxLength: 25 }),
@@ -931,10 +1020,11 @@ describe("予約の変更", () => {
                   start = base.plus({ minutes: s.range.startMinutes }).setZone(z);
                   end = base.plus({ minutes: s.range.endMinutes }).setZone(z);
                 } else {
-                  const attached = reservations.find(
-                    (r) => isSecondHold(r.status) && r.provisionalIds.includes(target.id),
-                  );
-                  const anchor = attached ?? target;
+                  // 付いている第二キープの近くか、付いていない第二キープ（重ならなくなって外れたものを含む）の近くへ動かす
+                  const holds = reservations.filter((r) => isSecondHold(r.status));
+                  const attached = holds.find((r) => r.provisionalIds.includes(target.id));
+                  const anyHold = holds.length > 0 ? holds[s.pick % holds.length] : undefined;
+                  const anchor = (s.attachedHold ? attached : anyHold) ?? target;
                   start = anchor.start.plus({ minutes: 30 * s.offsetSlots });
                   end = start.plus({ minutes: 30 * s.lengthSlots });
                 }
@@ -967,6 +1057,18 @@ describe("予約の変更", () => {
                   throw new Error(
                     `${s.kind} ${target.id}（${target.status}）が失敗した（${result.reason}）`,
                   );
+                }
+                // 仮予約の昇格・取消が影響するのは、その仮予約に付いている第二キープだけ。
+                // 動いて重ならなくなり、付かなくなった第二キープは変わらない
+                if (s.kind === "promote" || s.kind === "cancel") {
+                  for (const [i, b] of reservations.entries()) {
+                    if (b.id === target.id || b.provisionalIds.includes(target.id)) continue;
+                    const a = result.reservations[i]!;
+                    expect(a.status, `${b.id}（${b.status}）は ${target.id} に付いていない`).toBe(
+                      b.status,
+                    );
+                    expect(a.provisionalIds, `${b.id} の付く仮予約の id`).toEqual(b.provisionalIds);
+                  }
                 }
                 reservations = [...result.reservations];
               }
