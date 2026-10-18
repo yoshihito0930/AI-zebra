@@ -41,3 +41,14 @@ export type {
   SecondHoldApplicationResult,
   SecondHoldRejection,
 } from "./second-hold";
+export {
+  applyReservationOperation,
+  needsProvisionalDeadlineWarning,
+} from "./reservation-transitions";
+export type {
+  Reservation,
+  ReservationDraft,
+  ReservationOperation,
+  ReservationOperationRejection,
+  ReservationOperationResult,
+} from "./reservation-transitions";
