@@ -1,5 +1,5 @@
 import type { DateTime } from "luxon";
-import { provisionalDeadline } from "./provisional-deadline";
+import { provisionalDeadline } from "./provisional-deadline.ts";
 
 // 申込の種類（docs/product-specs/booking.md の「申込の締め切り」）。firm＝本予約申込、provisional＝仮予約申込。
 // 第二キープ申込の締め切りは仕様の未決事項なので、ここには入れない。
