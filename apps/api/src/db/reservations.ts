@@ -210,7 +210,8 @@ const BATCH_GET_LIMIT = 100;
 /** BatchGetItem の読み残し（UnprocessedKeys）を読み直す回数の上限 */
 const BATCH_GET_MAX_RETRIES = 8;
 
-async function batchGet(store: ReservationStore, keys: Item[]): Promise<Item[]> {
+/** 強い整合性の BatchGetItem（1回に BATCH_GET_LIMIT 件まで）。読み残しは読み直す */
+export async function batchGet(store: ReservationStore, keys: Item[]): Promise<Item[]> {
   const items: Item[] = [];
   let pending: Item[] = keys;
   for (let retry = 0; pending.length > 0; retry++) {
@@ -271,7 +272,7 @@ export type HistoryOperation =
   | "promote"
   | "end"
   | "cancel"
-  | "advance"
+  | "move-up"
   | "change"
   | "buffer-change"
   | "direct-entry";
@@ -284,6 +285,12 @@ export interface HistorySnapshot {
   readonly bufferMinutes: 30 | 60;
   readonly confirmedPrice?: Yen;
   readonly provisionalIds?: readonly string[];
+  /** 申込の内容（変更の履歴で、中身の前後を残すときに持つ。reservation-model.md「金額」「履歴」） */
+  readonly partySize?: number;
+  readonly cycloramaFloorProtection?: boolean;
+  readonly planId?: string;
+  readonly equipmentInsurance?: boolean;
+  readonly optionIds?: readonly string[];
 }
 
 export interface HistoryEntry {
@@ -296,6 +303,8 @@ export interface HistoryEntry {
   readonly after?: HistorySnapshot;
   /** お客様の情報や撮影の内容が変わったときの、変わった項目の名前だけ（中身は書かない） */
   readonly changedFields?: readonly string[];
+  /** 変更のときに料金表で計算し直した見積（reservation-model.md「金額」） */
+  readonly estimate?: Estimate;
 }
 
 /** 予約の詳細（META・PII・履歴） */
@@ -358,7 +367,20 @@ export async function getReservation(
     .sort((a, b) => (a["sk"]?.S ?? "").localeCompare(b["sk"]?.S ?? ""))
     .map((item) => parseHistory(item, `${pk} ${item["sk"]?.S ?? ""}`));
 
-  const where = `${pk} META`;
+  return {
+    ...parseReservationMeta(id, meta),
+    customer: parseCustomer(readMap(pii, "customer", `${pk} PII`), `${pk} PII`),
+    shooting: parseShooting(readMap(pii, "shooting", `${pk} PII`), `${pk} PII`),
+    history,
+  };
+}
+
+/** 予約の META の中身（個人情報と履歴を除いた、予約の詳細） */
+export type ReservationMeta = Omit<ReservationDetail, "customer" | "shooting" | "history">;
+
+/** 予約の META のアイテムを読む。形が合わなければエラーを投げる（INV-4） */
+export function parseReservationMeta(id: string, meta: Item): ReservationMeta {
+  const where = `RES#${id} META`;
   const estimate = readMap(meta, "estimate", where);
   const route = readString(meta, "route", where);
   if (route !== "form" && route !== "admin") throw malformed(where, "route");
@@ -385,22 +407,19 @@ export async function getReservation(
     ...(provisionalIds === undefined ? {} : { provisionalIds }),
     createdAt: readInstant(meta, "createdAt", where),
     updatedAt: readInstant(meta, "updatedAt", where),
-    customer: parseCustomer(readMap(pii, "customer", `${pk} PII`), `${pk} PII`),
-    shooting: parseShooting(readMap(pii, "shooting", `${pk} PII`), `${pk} PII`),
-    history,
   };
 }
 
 // ---- 内部の部品 ----
 
 /** maxAttempts を省略したときの、試す回数の上限 */
-const DEFAULT_MAX_ATTEMPTS = 5;
+export const DEFAULT_MAX_ATTEMPTS = 5;
 
 /** 申込のバッファ（reservation-model.md「予約が持つもの」。初期値は60分） */
 const APPLICATION_BUFFER_MINUTES = 60;
 
 /** 日の区切りに使うタイムゾーン（INV-7。dynamodb-keys.md「アイテム」） */
-const JST = "Asia/Tokyo";
+export const JST = "Asia/Tokyo";
 
 const PENDING_STATUS = {
   firm: "pending-firm",
@@ -472,7 +491,7 @@ function toBookingCoreInput(intervals: readonly OccupiedInterval[]): {
  * 占有区間 [start, end) がかかる JST の日付（YYYY-MM-DD）の一覧。
  * 半開区間なので、ちょうど JST の 0:00 で終わるときは、その日は含めない
  */
-function jstDaysOf(start: DateTime, end: DateTime): string[] {
+export function jstDaysOf(start: DateTime, end: DateTime): string[] {
   const days: string[] = [];
   const endMillis = end.toMillis();
   for (
@@ -486,13 +505,13 @@ function jstDaysOf(start: DateTime, end: DateTime): string[] {
 }
 
 /** 書き込みのために読んだ日ごとのアイテム。version が null ならアイテムはまだない */
-interface DayState {
+export interface DayState {
   readonly day: string;
   readonly version: number | null;
   readonly intervals: readonly OccupiedInterval[];
 }
 
-async function readDayForWrite(store: ReservationStore, day: string): Promise<DayState> {
+export async function readDayForWrite(store: ReservationStore, day: string): Promise<DayState> {
   const res = await store.client.send(
     new GetItemCommand({
       TableName: store.tableName,
@@ -504,7 +523,7 @@ async function readDayForWrite(store: ReservationStore, day: string): Promise<Da
   return parseDayItem(day, res.Item);
 }
 
-function dayKey(day: string): Record<string, AttributeValue> {
+export function dayKey(day: string): Record<string, AttributeValue> {
   return { pk: { S: `DAY#${day}` }, sk: { S: "META" } };
 }
 
@@ -639,7 +658,7 @@ function reservationWriteItems(
 }
 
 /** 履歴のソートキー HIST#<日時（UTC）>#<連番>。連番は同じ日時の履歴を並べるためのもので、1から4桁で埋める */
-function historySortKey(atUtcIso: string, sequence: number): string {
+export function historySortKey(atUtcIso: string, sequence: number): string {
   return `HIST#${atUtcIso}#${String(sequence).padStart(4, "0")}`;
 }
 
@@ -647,7 +666,7 @@ function historySortKey(atUtcIso: string, sequence: number): string {
  * やり直せる失敗か：トランザクションが、条件（版番号・まだないこと）の失敗か、
  * 同じアイテムへの別のトランザクションとの衝突で取り消された
  */
-function isRetryableConflict(error: unknown): boolean {
+export function isRetryableConflict(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (error.name === "TransactionConflictException") return true;
   if (error.name !== "TransactionCanceledException") return false;
@@ -667,17 +686,17 @@ function isRetryableConflict(error: unknown): boolean {
 // ---- 属性の形の変換（DynamoDB の AttributeValue と、普通の値） ----
 
 /** UTC の ISO 8601（INV-7）。どのゾーンで表した DateTime でも、同じ時点の UTC にする */
-function utcIso(dateTime: DateTime): string {
+export function utcIso(dateTime: DateTime): string {
   const iso = dateTime.toUTC().toISO();
   if (iso === null) throw new RangeError("日時が不正");
   return iso;
 }
 
-function stringList(values: readonly string[]): AttributeValue {
+export function stringList(values: readonly string[]): AttributeValue {
   return { L: values.map((value) => ({ S: value })) };
 }
 
-function intervalAttribute(interval: OccupiedInterval): AttributeValue {
+export function intervalAttribute(interval: OccupiedInterval): AttributeValue {
   return {
     M: {
       kind: { S: interval.kind },
@@ -692,14 +711,14 @@ function intervalAttribute(interval: OccupiedInterval): AttributeValue {
   };
 }
 
-type Item = Record<string, AttributeValue>;
+export type Item = Record<string, AttributeValue>;
 
 /** DB から読んだ値の形が合わないときのエラー。値は書かない（個人情報を含むことがあるため。INV-10） */
-function malformed(where: string, attribute: string): Error {
+export function malformed(where: string, attribute: string): Error {
   return new Error(`DB のアイテムの形が不正（${where} の ${attribute}）`);
 }
 
-function readString(item: Item, attribute: string, where: string): string {
+export function readString(item: Item, attribute: string, where: string): string {
   const value = item[attribute]?.S;
   if (value === undefined) throw malformed(where, attribute);
   return value;
@@ -809,6 +828,18 @@ function parseSnapshot(map: Item, where: string): HistorySnapshot {
   const confirmedPrice =
     map["confirmedPrice"] === undefined ? undefined : readYen(map, "confirmedPrice", where);
   const provisionalIds = readOptionalStringList(map, "provisionalIds", where);
+  const partySize =
+    map["partySize"] === undefined ? undefined : readNumber(map, "partySize", where);
+  const cycloramaFloorProtection =
+    map["cycloramaFloorProtection"] === undefined
+      ? undefined
+      : readBoolean(map, "cycloramaFloorProtection", where);
+  const planId = readOptionalString(map, "planId", where);
+  const equipmentInsurance =
+    map["equipmentInsurance"] === undefined
+      ? undefined
+      : readBoolean(map, "equipmentInsurance", where);
+  const optionIds = readOptionalStringList(map, "optionIds", where);
   return {
     status: readStatus(map, "status", where),
     start: readInstant(map, "start", where),
@@ -816,6 +847,11 @@ function parseSnapshot(map: Item, where: string): HistorySnapshot {
     bufferMinutes: readBufferMinutes(map, "bufferMinutes", where),
     ...(confirmedPrice === undefined ? {} : { confirmedPrice }),
     ...(provisionalIds === undefined ? {} : { provisionalIds }),
+    ...(partySize === undefined ? {} : { partySize }),
+    ...(cycloramaFloorProtection === undefined ? {} : { cycloramaFloorProtection }),
+    ...(planId === undefined ? {} : { planId }),
+    ...(equipmentInsurance === undefined ? {} : { equipmentInsurance }),
+    ...(optionIds === undefined ? {} : { optionIds }),
   };
 }
 
@@ -839,7 +875,7 @@ const HISTORY_OPERATIONS: ReadonlySet<string> = new Set<HistoryOperation>([
   "promote",
   "end",
   "cancel",
-  "advance",
+  "move-up",
   "change",
   "buffer-change",
   "direct-entry",
@@ -853,6 +889,14 @@ function parseHistory(item: Item, where: string): HistoryEntry {
   const after =
     item["after"] === undefined ? undefined : parseSnapshot(readMap(item, "after", where), where);
   const changedFields = readOptionalStringList(item, "changedFields", where);
+  const estimateMap = item["estimate"] === undefined ? undefined : readMap(item, "estimate", where);
+  const estimate =
+    estimateMap === undefined
+      ? undefined
+      : {
+          subtotalExcludingTax: readYen(estimateMap, "subtotalExcludingTax", where),
+          estimateIncludingTax: readYen(estimateMap, "estimateIncludingTax", where),
+        };
   return {
     at: readInstant(item, "at", where),
     actor: parseActor(readMap(item, "actor", where), where),
@@ -860,6 +904,7 @@ function parseHistory(item: Item, where: string): HistoryEntry {
     ...(before === undefined ? {} : { before }),
     ...(after === undefined ? {} : { after }),
     ...(changedFields === undefined ? {} : { changedFields }),
+    ...(estimate === undefined ? {} : { estimate }),
   };
 }
 
