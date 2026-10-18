@@ -52,3 +52,20 @@ export type {
   ReservationOperationRejection,
   ReservationOperationResult,
 } from "./reservation-transitions";
+export { approveReservation, rejectReservation } from "./reservation-approval";
+export type {
+  ApprovalDraft,
+  ApprovalFailureReason,
+  ApprovalResult,
+  RejectionDraft,
+  RejectionResult,
+} from "./reservation-approval";
+export { applyReservationChange } from "./reservation-change";
+export type {
+  ReservationChange,
+  ReservationChangeContent,
+  ReservationChangeDraft,
+  ReservationChangeEstimate,
+  ReservationChangeFailureReason,
+  ReservationChangeResult,
+} from "./reservation-change";
