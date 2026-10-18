@@ -43,7 +43,9 @@ export type TamperProblem =
 /**
  * 次のどちらかがあれば問題として返す。
  * - 実装を含むPRで、既存の自律度「中」のテストを変更・削除している
- * - 失敗予定リストに足した項目が、このPRで新しく足したテストではない（既存のテストを隠している）
+ * - 失敗予定リストに足した項目が、このPRで新しく足したテストではない（既存のテストを隠している）。
+ *   ただし、実装を含まないPR（テストを直すPR）では、このPRで変更したテストも足してよい。
+ *   すでに実装のある関数の振る舞いを仕様の変更で変えるとき、直したテストは今の実装では失敗するため（docs/TESTING.md の手順5）
  */
 export function checkTamper(
   changes: readonly Change[],
@@ -61,8 +63,11 @@ export function checkTamper(
     problems.push({ kind: "existing-test-changed", tests: changedTests, implementations });
   }
 
-  const addedTests = new Set(changes.filter((c) => c.status === "A").map((c) => c.path));
-  const notNew = addedExpectedFailures.filter((e) => !addedTests.has(e));
+  const testOnly = implementations.length === 0;
+  const allowed = new Set(
+    changes.filter((c) => c.status === "A" || (testOnly && c.status === "M")).map((c) => c.path),
+  );
+  const notNew = addedExpectedFailures.filter((e) => !allowed.has(e));
   if (notNew.length > 0) problems.push({ kind: "expected-failure-not-new", entries: notNew });
 
   return problems;
@@ -80,7 +85,7 @@ export function describeTamperProblem(p: TamperProblem): string[] {
     case "expected-failure-not-new":
       return [
         "✗ 失敗予定リスト（harness/expected-failures.txt）に、このPRで新しく足したテスト以外を追加している",
-        "  レビュー済みのテストを失敗予定にして隠すことはできない",
+        "  レビュー済みのテストを失敗予定にして隠すことはできない（実装を含まないPRでは、そのPRで変更したテストは足せる）",
         `  項目：${p.entries.join(", ")}`,
       ];
   }

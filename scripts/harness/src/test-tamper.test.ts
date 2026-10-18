@@ -86,4 +86,35 @@ describe("既存の自律度「中」のテストの改ざんを見つける", (
       { kind: "expected-failure-not-new", entries: [TEST] },
     ]);
   });
+
+  it("実装を含まないPRで、そのPRで変更したテストを失敗予定リストに足す → 成功（仕様の変更で振る舞いを変えるときの、テストを直すPR）", () => {
+    const changes = [
+      M(TEST),
+      M("docs/product-specs/booking.md"),
+      M("harness/expected-failures.txt"),
+    ];
+    expect(checkTamper(changes, config, [TEST])).toEqual([]);
+  });
+
+  it("実装を含まないPRでも、そのPRで変更していない既存のテストを失敗予定リストに足す → 失敗", () => {
+    const other = "packages/booking-core/src/pricing.test.ts";
+    expect(checkTamper([M(TEST), M("harness/expected-failures.txt")], config, [other])).toEqual([
+      { kind: "expected-failure-not-new", entries: [other] },
+    ]);
+  });
+
+  it("実装を含むPRで、そのPRで変更したテストを失敗予定リストに足す → 失敗（両方の問題）", () => {
+    expect(
+      checkTamper([M(TEST), M(IMPL), M("harness/expected-failures.txt")], config, [TEST]),
+    ).toEqual([
+      { kind: "existing-test-changed", tests: [TEST], implementations: [IMPL] },
+      { kind: "expected-failure-not-new", entries: [TEST] },
+    ]);
+  });
+
+  it("消したテストを失敗予定リストに足す → 失敗", () => {
+    expect(checkTamper([D(TEST), M("harness/expected-failures.txt")], config, [TEST])).toEqual([
+      { kind: "expected-failure-not-new", entries: [TEST] },
+    ]);
+  });
 });
