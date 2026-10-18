@@ -128,6 +128,7 @@ describe("テスト担当のガード", () => {
     "pnpm --filter @zebra/booking-core add luxon",
     "npm install fast-check",
     "npm i -D fast-check",
+    "pnpm add fast-check 2>&1 | tail -3",
     "pnpm install -D -w fast-check",
     "pnpm remove zod",
     "echo '{}' > packages/booking-core/package.json",
@@ -138,6 +139,9 @@ describe("テスト担当のガード", () => {
   it.each([
     "pnpm install",
     "pnpm install --frozen-lockfile",
+    // 2026-10-18 に実際に止まったコマンド（リダイレクトの 2 を名前とみなしていた）
+    "pnpm install --frozen-lockfile 2>&1 | tail -3",
+    "pnpm install > /dev/null",
     "cat package.json packages/booking-core/package.json",
     "pnpm --filter @zebra/booking-core typecheck",
     "pnpm vitest run packages/booking-core/src/add.test.ts",
