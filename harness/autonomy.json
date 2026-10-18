@@ -4,6 +4,8 @@
     "packages/booking-core/src/**",
     "packages/contracts/src/**",
     "apps/api/src/public/**",
+    "apps/api/src/admin/**",
+    "apps/api/src/db/**",
     "apps/api/src/mail/**",
     "apps/api/src/gcal/**"
   ]
