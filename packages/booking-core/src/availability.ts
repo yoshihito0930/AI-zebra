@@ -1,6 +1,6 @@
 // 空き判定（docs/product-specs/booking.md「空き判定」「バッファを30分に縮める」。INV-1）
 // 区間はすべて半開区間 [start, end)。占有区間は [start, end + バッファ)。
-// 第二キープの申込だけ仮予約1件との重なりを許す例外（「第二キープ」の節）は、ここでは扱わない（second-hold.ts）。
+// 第二キープの申込だけ承認済みの仮予約との重なり（2件以上にまたがってもよい）を許す例外（「第二キープ」の節）は、ここでは扱わない（second-hold.ts）。
 // 占有区間・重なり・枠を確保する状態の判定は second-hold.ts と共有する（同じ計算を2か所に持たない）。
 // 共有の部品は booking-core の中だけで使い、index.ts からは出さない。
 import type { ReservationStatus } from "@zebra/contracts";
@@ -141,7 +141,7 @@ export function occupiedRangeOf(
 /**
  * 申込の占有区間が、枠を確保している既存の予約とブロック枠のどの占有区間とも重ならなければ予約可。
  * 第二キープ以外の申込（仮予約申込・本予約申込、管理者が直接入れる仮予約・本予約）の判定。
- * 第二キープの申込は仮予約1件との重なりを許す（「第二キープ」の節）が、その例外はこの関数では扱わない。
+ * 第二キープの申込は承認済みの仮予約との重なり（2件以上にまたがってもよい）を許す（「第二キープ」の節）が、その例外はこの関数では扱わない。
  * 申込・既存の予約・ブロック枠の区間が、不正な日時か終了が開始以前なら RangeError を投げる
  */
 export function checkAvailability(input: AvailabilityInput): AvailabilityResult {
