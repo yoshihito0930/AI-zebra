@@ -157,7 +157,7 @@ export function decide(role, toolName, toolInput, repoRoot, exists = () => true,
           return `テスト担当は実装（${impl.join(", ")}）を読まない（docs/TESTING.md）`;
         }
         if (
-          DEPENDENCY_COMMANDS.test(segment) ||
+          DEPENDENCY_COMMANDS.test(segment.replace(/\s\d*>>?&?\s*\S+/g, " ")) ||
           (DEPENDENCY_FILES.test(segment) && WRITE_HINTS.test(segment))
         ) {
           return "テスト担当は依存を変えない。依存が要るなら、止まって報告する（テストの PR の前に準備の PR を出す。docs/TESTING.md）";
