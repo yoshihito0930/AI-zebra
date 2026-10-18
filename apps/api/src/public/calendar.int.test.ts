@@ -274,20 +274,61 @@ function byStart(a: NormalizedBooking, b: NormalizedBooking): number {
   return a.start - b.start || a.end - b.end || a.label.localeCompare(b.label);
 }
 
-/** 返った予約状況を比べやすい形にする。契約（PublicCalendar、strictObject）を通ることも確かめる */
-function normalizeCalendar(value: unknown): { date: string; bookings: NormalizedBooking[] }[] {
+/**
+ * 返った予約状況を比べやすい形にする。契約（PublicCalendar、strictObject）を通ることも確かめる。
+ * 各日の予約は、返った順のまま
+ */
+function normalizeCalendarAsReturned(
+  value: unknown,
+): { date: string; bookings: NormalizedBooking[] }[] {
   const calendar = PublicCalendar.parse(value);
   return calendar.days.map((day) => ({
     date: day.date,
-    bookings: day.bookings
-      .map((booking) => {
-        const start = DateTime.fromISO(booking.start, { setZone: true });
-        const end = DateTime.fromISO(booking.end, { setZone: true });
-        expect(start.isValid && end.isValid).toBe(true);
-        return { label: booking.label, start: start.toMillis(), end: end.toMillis() };
-      })
-      .sort(byStart),
+    bookings: day.bookings.map((booking) => {
+      const start = DateTime.fromISO(booking.start, { setZone: true });
+      const end = DateTime.fromISO(booking.end, { setZone: true });
+      expect(start.isValid && end.isValid).toBe(true);
+      return { label: booking.label, start: start.toMillis(), end: end.toMillis() };
+    }),
   }));
+}
+
+/** 返った予約状況を比べやすい形にする。各日の予約は並べ直す（並び順を問わない比べ方に使う） */
+function normalizeCalendar(value: unknown): { date: string; bookings: NormalizedBooking[] }[] {
+  return normalizeCalendarAsReturned(value).map((day) => ({
+    date: day.date,
+    bookings: [...day.bookings].sort(byStart),
+  }));
+}
+
+/**
+ * 予約状況が、並び順も含めて期待どおりかを確かめる（booking.md「空き判定」：各日の一覧は、開始の早い順。
+ * 開始が同じなら、終わりの早い順）。expected の各日の予約は、期待する順に書く
+ */
+function expectCalendarInOrder(actual: unknown, expected: ExpectedDay[]): void {
+  const normalized = expected.map((day) => ({
+    date: day.date,
+    bookings: day.bookings.map((booking) => ({
+      label: booking.label,
+      start: jst(booking.start).toMillis(),
+      end: jst(booking.end).toMillis(),
+    })),
+  }));
+  expect(normalizeCalendarAsReturned(actual)).toEqual(normalized);
+}
+
+/** 各日の一覧が、開始の早い順（開始が同じなら、終わりの早い順）に並んでいるかを確かめる */
+function expectEachDayInTimeOrder(actual: unknown): void {
+  for (const day of normalizeCalendarAsReturned(actual)) {
+    for (let i = 1; i < day.bookings.length; i++) {
+      const before = day.bookings[i - 1];
+      const after = day.bookings[i];
+      if (before === undefined || after === undefined) continue;
+      const inOrder =
+        before.start < after.start || (before.start === after.start && before.end <= after.end);
+      expect(inOrder, `${day.date} の ${i - 1} 番目と ${i} 番目の順`).toBe(true);
+    }
+  }
 }
 
 function normalizeExpected(days: ExpectedDay[]): { date: string; bookings: NormalizedBooking[] }[] {
@@ -946,6 +987,101 @@ describe("公開APIの予約状況：HTTP（GET /calendar）", () => {
   });
 });
 
+describe("公開APIの予約状況：各日の一覧は開始の早い順（開始が同じなら終わりの早い順）", () => {
+  /** 関数の戻り値と、HTTP（GET /calendar）の JSON の両方で確かめる */
+  const readers: [string, (from: string, to: string) => Promise<unknown>][] = [
+    ["関数の戻り値", (from, to) => read(from, to)],
+    [
+      "HTTP の JSON",
+      async (from, to) => {
+        const res = await createPublicCalendarRoute(store).request(
+          `/calendar?from=${from}&to=${to}`,
+        );
+        expect(res.status).toBe(200);
+        return res.json();
+      },
+    ],
+  ];
+
+  it.each(readers)(
+    "10/20 にブロック枠 12:00–13:00、本予約 18:00–20:00、仮予約 08:00–10:00 の順に入れたとき（%s）：仮予約 08:00–10:00、予約不可 12:00–13:00、本予約 18:00–20:00 の順に返る",
+    async (_, readCalendar) => {
+      await putDay("2026-10-20", [
+        {
+          kind: "block",
+          id: "seed-block-order",
+          start: "2026-10-20T12:00",
+          end: "2026-10-20T13:00",
+          bufferMinutes: 0,
+        },
+      ]);
+      await apply("firm", "2026-10-20T18:00", "2026-10-20T20:00");
+      await applyApproved("provisional", "2026-10-20T08:00", "2026-10-20T10:00");
+
+      expectCalendarInOrder(await readCalendar("2026-10-20", "2026-10-20"), [
+        {
+          date: "2026-10-20",
+          bookings: [
+            { label: "provisional", start: "2026-10-20T08:00", end: "2026-10-20T10:00" },
+            { label: "unavailable", start: "2026-10-20T12:00", end: "2026-10-20T13:00" },
+            { label: "firm", start: "2026-10-20T18:00", end: "2026-10-20T20:00" },
+          ],
+        },
+      ]);
+    },
+  );
+
+  it.each(readers)(
+    "仮予約 P 13:00–17:00 のあとに、P に付く第二キープ K 13:00–15:00 を入れたとき（%s）：開始が同じなので終わりの早い順に、第二キープ 13:00–15:00、仮予約 13:00–17:00 の順に返る",
+    async (_, readCalendar) => {
+      await applyApproved("provisional", "2026-10-20T13:00", "2026-10-20T17:00");
+      await apply("second-hold", "2026-10-20T13:00", "2026-10-20T15:00");
+
+      expectCalendarInOrder(await readCalendar("2026-10-20", "2026-10-20"), [
+        {
+          date: "2026-10-20",
+          bookings: [
+            { label: "second-hold", start: "2026-10-20T13:00", end: "2026-10-20T15:00" },
+            { label: "provisional", start: "2026-10-20T13:00", end: "2026-10-20T17:00" },
+          ],
+        },
+      ]);
+    },
+  );
+
+  it.each(readers)(
+    "10/21 にブロック枠 12:00–13:00、本予約 06:00–10:00 を入れたあとに、前の日から続く本予約 10/20 22:00–10/21 02:00 を入れたとき（%s）：10/21 は 10/20 22:00–10/21 02:00、06:00–10:00、予約不可 12:00–13:00 の順に返る",
+    async (_, readCalendar) => {
+      await putDay("2026-10-21", [
+        {
+          kind: "block",
+          id: "seed-block-order-next-day",
+          start: "2026-10-21T12:00",
+          end: "2026-10-21T13:00",
+          bufferMinutes: 0,
+        },
+      ]);
+      await apply("firm", "2026-10-21T06:00", "2026-10-21T10:00");
+      await applyApproved("firm", "2026-10-20T22:00", "2026-10-21T02:00");
+
+      expectCalendarInOrder(await readCalendar("2026-10-20", "2026-10-21"), [
+        {
+          date: "2026-10-20",
+          bookings: [{ label: "firm", start: "2026-10-20T22:00", end: "2026-10-21T02:00" }],
+        },
+        {
+          date: "2026-10-21",
+          bookings: [
+            { label: "firm", start: "2026-10-20T22:00", end: "2026-10-21T02:00" },
+            { label: "firm", start: "2026-10-21T06:00", end: "2026-10-21T10:00" },
+            { label: "unavailable", start: "2026-10-21T12:00", end: "2026-10-21T13:00" },
+          ],
+        },
+      ]);
+    },
+  );
+});
+
 // ---- プロパティベーステスト（INV-3） ----
 
 const activeStatuses = [
@@ -984,7 +1120,7 @@ function daysTouched(start: DateTime, end: DateTime): string[] {
 }
 
 describe("公開APIの予約状況：どの予約・ブロック枠の組み合わせでも、表示名と予約区間だけを返す（INV-3）", () => {
-  it("ランダムに並べた予約（6つの状態、バッファ30分・1時間）とブロック枠（バッファなし・30分・1時間）を日ごとのアイテムに入れると：期間の日ごとに、予約区間がその日にかかるものだけが、表示名と予約区間で返り、id と状態の値はどこにもない", async () => {
+  it("ランダムに並べた予約（6つの状態、バッファ30分・1時間）とブロック枠（バッファなし・30分・1時間）を、日ごとのアイテムの中の順をばらばらにして入れると：期間の日ごとに、予約区間がその日にかかるものだけが、表示名と予約区間で、開始の早い順（同じなら終わりの早い順）に返り、id と状態の値はどこにもない", async () => {
     const base = jst("2026-10-19T00:00");
     const entryShape = fc.oneof(
       fc.record({
@@ -1007,7 +1143,8 @@ describe("公開APIの予約状況：どの予約・ブロック枠の組み合�
         fc.array(entryShape, { minLength: 0, maxLength: 8 }),
         fc.integer({ min: 0, max: 5 }),
         fc.integer({ min: 0, max: 4 }),
-        async (shapes, fromOffset, length) => {
+        fc.array(fc.integer(), { minLength: 8, maxLength: 8 }),
+        async (shapes, fromOffset, length, orderKeys) => {
           const own = await createTable();
           try {
             // 占有区間が重ならないように、前のものの占有区間の終わりから間を空けて並べる
@@ -1041,8 +1178,13 @@ describe("公開APIの予約状況：どの予約・ブロック枠の組み合�
                 byDay.set(day, [...(byDay.get(day) ?? []), seed]);
               }
             }
+            // 日ごとのアイテムの中の順は、時間の順にしない（並べるのは公開APIの役目）
+            const orderKey = (seed: SeedInterval) => orderKeys[Number(seed.id.split("-")[2])] ?? 0;
             for (const [day, intervals] of byDay) {
-              await putDay(day, intervals, own);
+              const shuffled = [...intervals].sort(
+                (a, b) => orderKey(a) - orderKey(b) || b.start.localeCompare(a.start),
+              );
+              await putDay(day, shuffled, own);
             }
 
             const from = base.plus({ days: fromOffset });
@@ -1069,6 +1211,7 @@ describe("公開APIの予約状況：どの予約・ブロック枠の組み合�
             const calendar = await readPublicCalendar(own, { from: fromDate, to: toDate });
 
             expectCalendar(calendar, expected);
+            expectEachDayInTimeOrder(calendar);
             const { strings } = keysAndValuesIn(JSON.parse(JSON.stringify(calendar)));
             for (const s of strings) {
               for (const value of [
