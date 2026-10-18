@@ -2,6 +2,8 @@
 // docs/product-specs/booking.md「予約の状態」「仮予約から本予約へ」「第二キープ」「取消とキャンセル料」「確認メール」）。
 // 入出力を持たない（INV-5）。現在時刻は引数で受け取る（INV-7）。
 // 枠と予約の書き込み（INV-2）と、下書きの保存・送信（INV-6）は呼び出す側が行う。
+// 解放する枠の計算・第二キープの判定・前倒しの案内の部品は、承認・却下（reservation-approval.ts）と
+// 変更（reservation-change.ts）と共有する（同じ計算を2か所に持たない）。共有の部品は index.ts からは出さない。
 import type { ReservationStatus, Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
 import {
@@ -236,11 +238,11 @@ function moveUp(
   return succeeded(reservations, after, []);
 }
 
-function isSecondHoldStatus(status: ReservationStatus): boolean {
+export function isSecondHoldStatus(status: ReservationStatus): boolean {
   return status === "second-hold" || status === "pending-second-hold";
 }
 
-function occupiedOf(reservation: Reservation): TimeRange {
+export function occupiedOf(reservation: Reservation): TimeRange {
   return occupiedRangeOf(reservation, reservation.bufferMinutes, "予約の予約区間");
 }
 
@@ -248,7 +250,7 @@ function occupiedOf(reservation: Reservation): TimeRange {
  * 第二キープに付いている仮予約のうち、まだ仮予約のまま第二キープの占有区間と重なっているものの id（provisionalIds の並び順）。
  * reservations にない id は、重なっているものに数えない
  */
-function provisionalsStillHolding(
+export function provisionalsStillHolding(
   secondHold: Reservation,
   reservations: readonly Reservation[],
 ): string[] {
@@ -267,7 +269,7 @@ function provisionalsStillHolding(
  * 第二キープが取消・終了して枠を解放したときの、前倒しの案内の下書き（booking.md「第二キープ」）。
  * 操作のあとに枠を確保している予約のうち、第二キープの占有区間の終わりに接して始まるもののお客様あて
  */
-function bringForwardNotices(
+export function bringForwardNotices(
   secondHold: Reservation,
   after: readonly Reservation[],
 ): ReservationDraft[] {
@@ -296,7 +298,7 @@ function succeeded(
 }
 
 /** 枠を確保している予約の占有区間 */
-function holdingRanges(reservations: readonly Reservation[]): TimeRange[] {
+export function holdingRanges(reservations: readonly Reservation[]): TimeRange[] {
   return reservations
     .filter((reservation) => holdsSlots(reservation.status))
     .map((reservation) => occupiedOf(reservation));
@@ -322,7 +324,10 @@ function mergeRanges(ranges: readonly TimeRange[]): TimeRange[] {
 }
 
 /** from のどれかに入っていて、removed のどれにも入らない時間（開始の早い順。重なる・接する区間はつなぐ） */
-function subtractRanges(from: readonly TimeRange[], removed: readonly TimeRange[]): TimeRange[] {
+export function subtractRanges(
+  from: readonly TimeRange[],
+  removed: readonly TimeRange[],
+): TimeRange[] {
   let rest = mergeRanges(from);
   for (const cut of mergeRanges(removed)) {
     rest = rest.flatMap((range): TimeRange[] => {
