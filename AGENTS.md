@@ -9,6 +9,7 @@
 2. [docs/product-specs/index.md](docs/product-specs/index.md) — 何を作るか（v1スコープ）
 3. [docs/product-specs/booking.md](docs/product-specs/booking.md) — 予約・空き判定の仕様
    - [docs/design-docs/reservation-model.md](docs/design-docs/reservation-model.md) — 予約のデータと状態の移り変わり（booking.md を予約のデータと操作の形に直したもの）
+   - [docs/design-docs/dynamodb-keys.md](docs/design-docs/dynamodb-keys.md) — DynamoDB のキー設計（自律度「低」）
 4. [docs/TECH_STACK.md](docs/TECH_STACK.md) — 技術スタックと選定理由
 5. [docs/TESTING.md](docs/TESTING.md) — テストの進め方。**テストを書く・実装する前に必読**
 6. [docs/exec-plans/](docs/exec-plans/) — 進行中の作業計画
