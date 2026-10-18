@@ -70,6 +70,13 @@ function applyOther(zone: Zone, start: string, end: string, reservations: Existi
   });
 }
 
+// 結果の形：
+// - 受付：{ ok: true, provisionalIds }。provisionalIds は、申込の占有区間と重なる承認済みの仮予約（provisional）すべての id。
+//   並び順は、引数の reservations の並び順（第二キープが付く仮予約。reservation-model.md「第二キープと仮予約」）
+// - 不可（承認済みの仮予約以外の、枠を確保している予約かブロック枠と重なる）：{ ok: false, reason: "overlaps-existing" }
+// - 不可（どの承認済みの仮予約とも重ならない。第二キープとしては受けない）：{ ok: false, reason: "no-provisional-to-hold" }
+// 不可の理由が2つとも当てはまるときにどちらを返すかは決めない（booking.md の未決事項「予約不可の理由が複数当てはまるとき」と同じ扱い）
+
 // 既存の仮予約 P 13:00–15:00（占有区間 13:00–16:00）。「承認済みの仮予約」なので状態は provisional
 function reservationP(zone: Zone): ExistingReservation {
   return reservation(zone, "P", "provisional", "13:00", "15:00");
@@ -96,7 +103,10 @@ describe("第二キープ", () => {
       for (const zone of zones) {
         const p = reservationP(zone);
         expectRange(occupiedRange(p, 60), "13:00", "16:00");
-        expect(applySecondHold(zone, "13:00", "15:00", [p]), zone).toEqual({ ok: true });
+        expect(applySecondHold(zone, "13:00", "15:00", [p]), zone).toEqual({
+          ok: true,
+          provisionalIds: ["P"],
+        });
 
         // 枠を確保する：承認待ちのまま、同じ区間の第二キープ申込は受けない（ほかの第二キープと重なる）
         const accepted = reservation(zone, "S", "pending-second-hold", "13:00", "15:00");
@@ -113,6 +123,7 @@ describe("第二キープ", () => {
         expectRange(occupiedRange(applied, 60), "14:00", "18:00");
         expect(applySecondHold(zone, "14:00", "17:00", [reservationP(zone)]), zone).toEqual({
           ok: true,
+          provisionalIds: ["P"],
         });
       }
     });
@@ -145,7 +156,7 @@ describe("第二キープ", () => {
           expect(
             applySecondHold(zone, "11:00", "13:00", [p, k]),
             `${zone}、すでにある第二キープは ${status}`,
-          ).toEqual({ ok: true });
+          ).toEqual({ ok: true, provisionalIds: ["P"] });
         }
       }
     });
@@ -157,6 +168,56 @@ describe("第二キープ", () => {
           ok: false,
           reason: "overlaps-existing",
         });
+      }
+    });
+
+    it("第二キープ 18:00–20:00（占有区間 18:00–21:00）：第二キープとしては不可（どの仮予約とも重ならない。普通の申込になる）", () => {
+      for (const zone of zones) {
+        const p = reservationP(zone);
+        const applied = { start: at("18:00", zone), end: at("20:00", zone) };
+        expectRange(occupiedRange(applied, 60), "18:00", "21:00");
+        expect(applySecondHold(zone, "18:00", "20:00", [p]), zone).toEqual({
+          ok: false,
+          reason: "no-provisional-to-hold",
+        });
+        // 普通の申込になる：普通の申込（checkAvailability）としては受付
+        expect(applyOther(zone, "18:00", "20:00", [p]), zone).toEqual({ ok: true });
+      }
+    });
+  });
+
+  describe("2件の仮予約にまたがる場合。仮予約 P1 10:00–12:00（占有区間 10:00–13:00）と仮予約 P2 15:00–17:00（占有区間 15:00–18:00）があるとき。", () => {
+    function provisionals(zone: Zone, p2Status: ReservationStatus): ExistingReservation[] {
+      const p1 = reservation(zone, "P1", "provisional", "10:00", "12:00");
+      const p2 = reservation(zone, "P2", p2Status, "15:00", "17:00");
+      expectRange(occupiedRange(p1, 60), "10:00", "13:00");
+      expectRange(occupiedRange(p2, 60), "15:00", "18:00");
+      return [p1, p2];
+    }
+
+    it("第二キープ 12:00–16:00（占有区間 12:00–17:00）：受付（P1 と P2 の両方に付く）", () => {
+      for (const zone of zones) {
+        const applied = { start: at("12:00", zone), end: at("16:00", zone) };
+        expectRange(occupiedRange(applied, 60), "12:00", "17:00");
+        const existing = provisionals(zone, "provisional");
+        expect(applySecondHold(zone, "12:00", "16:00", existing), zone).toEqual({
+          ok: true,
+          provisionalIds: ["P1", "P2"],
+        });
+        // 付く仮予約の id は、引数の reservations の並び順で返す
+        expect(
+          applySecondHold(zone, "12:00", "16:00", [...existing].reverse()),
+          `${zone}、P2, P1 の順で渡す`,
+        ).toEqual({ ok: true, provisionalIds: ["P2", "P1"] });
+      }
+    });
+
+    it("第二キープ 12:00–16:00。ただし P2 が承認待ち（仮）：不可（承認待ちの仮予約とは重なれない）", () => {
+      for (const zone of zones) {
+        expect(
+          applySecondHold(zone, "12:00", "16:00", provisionals(zone, "pending-provisional")),
+          zone,
+        ).toEqual({ ok: false, reason: "overlaps-existing" });
       }
     });
   });
@@ -181,7 +242,7 @@ describe("第二キープ", () => {
     }
 
     it("第二キープ② 15:00–20:00（占有区間 15:00–21:00）：受付（仮予約とだけ重なり、①とは15:00で接するだけ）", () => {
-      expectRow("15:00", "20:00", "21:00", { ok: true });
+      expectRow("15:00", "20:00", "21:00", { ok: true, provisionalIds: ["P"] });
     });
 
     it("第二キープ 14:00–20:00（占有区間 14:00–21:00）：不可（①と重なる）", () => {
@@ -237,8 +298,8 @@ describe("第二キープ", () => {
     it.todo("K の後ろに予約がない、K が取消・終了したとき：作らない");
   });
 
-  // 未決事項「2件の仮予約にまたがる第二キープを受けるか。どの仮予約とも重ならない第二キープ申込をどう扱うか」に当たる入力
-  // （申込の占有区間と重なる承認済みの仮予約が1件でない）は、結果を確かめない
+  // 申込の占有区間と重なる承認済みの仮予約は、0件・1件・2件以上のすべてを入力にする
+  // （1件以上なら、そのすべてに付く。0件なら第二キープとしては受けない）
   describe("プロパティ（INV-1。どの入力でも成り立つこと）", () => {
     // 時刻は 10/20 00:00（JST）からの30分単位の枠で作る（10/20〜10/24 の範囲）
     const base = DateTime.fromISO("2026-10-20T00:00", { zone: "Asia/Tokyo" });
@@ -329,10 +390,10 @@ describe("第二キープ", () => {
       });
     }
 
-    // 申込の占有区間と重なる、承認済みの仮予約（枠を確保しているもの）
-    function overlappingProvisionals(applied: Shape, items: readonly Item[]): Item[] {
-      return items.filter(
-        ({ shape, status }) => status === "provisional" && occupiedOverlaps(applied, shape),
+    // 申込の占有区間と重なる、承認済みの仮予約の id（toReservations と同じ id。並び順は items の並び順）
+    function overlappingProvisionalIds(applied: Shape, items: readonly Item[]): string[] {
+      return items.flatMap(({ shape, status }, index) =>
+        status === "provisional" && occupiedOverlaps(applied, shape) ? [`r${index}`] : [],
       );
     }
 
@@ -347,61 +408,90 @@ describe("第二キープ", () => {
       );
     }
 
-    // P（承認済みの仮予約）と、ほかの予約（取消・終了を含むすべての状態）、ブロック枠
-    const provisionalShape = reservationShape;
+    // 承認済みの仮予約（0〜3件）と、ほかの予約（取消・終了を含むすべての状態。承認済みの仮予約も混ざる）、ブロック枠
+    const provisionalShapes = fc.array(reservationShape, { maxLength: 3 });
     const otherItems = fc.array(
       fc.record({ shape: reservationShape, status: fc.constantFrom(...ReservationStatus.options) }),
       { maxLength: 6 },
     );
     const blockShapes = fc.array(blockShape, { maxLength: 3 });
 
-    function itemsWith(p: Shape, others: readonly Item[]): Item[] {
-      return [{ shape: p, status: "provisional" }, ...others];
+    function itemsWith(provisionals: readonly Shape[], others: readonly Item[]): Item[] {
+      return [...provisionals.map((shape): Item => ({ shape, status: "provisional" })), ...others];
     }
 
-    it("受付になった第二キープの占有区間は、承認済みの仮予約以外の、枠を確保している予約（ほかの第二キープ〔承認待ちを含む〕を含む）とブロック枠のどの占有区間とも重ならない", () => {
+    it("受付になった第二キープの占有区間は、承認済みの仮予約の1件以上と重なり、承認済みの仮予約以外の、枠を確保している予約（ほかの第二キープ〔承認待ちを含む〕を含む）とブロック枠のどの占有区間とも重ならない", () => {
       fc.assert(
         fc.property(
           reservationShape,
-          provisionalShape,
+          provisionalShapes,
           otherItems,
           blockShapes,
           anyZone,
-          (applied, p, others, blocks, z) => {
-            const items = itemsWith(p, others);
-            fc.pre(overlappingProvisionals(applied, items).length === 1);
+          (applied, provisionals, others, blocks, z) => {
+            const items = itemsWith(provisionals, others);
             const result = check(applied, items, blocks, z);
             fc.pre(result.ok);
+            expect(overlappingProvisionalIds(applied, items).length).toBeGreaterThan(0);
             expect(overlapsOther(applied, items, blocks)).toBe(false);
           },
         ),
       );
     });
 
-    // 重なる仮予約に第二キープがすでにあっても、その第二キープと重ならなければ受付（1件の仮予約に何件でもよい）
-    it("承認済みの仮予約以外の、枠を確保している予約とブロック枠のどの占有区間とも重ならなければ受付。重なれば不可（本予約などと重なる）", () => {
+    // 重なる仮予約に第二キープがすでにあっても、その第二キープと重ならなければ受付（1件の仮予約に何件でもよい）。
+    // 2件以上の仮予約にまたがってもよい
+    it("重なる承認済みの仮予約が1件以上なら、承認済みの仮予約以外の、枠を確保している予約とブロック枠のどの占有区間とも重ならなければ受付（付く仮予約は、重なる承認済みの仮予約すべて）。重なれば不可（本予約などと重なる）", () => {
       fc.assert(
         fc.property(
           reservationShape,
-          provisionalShape,
+          provisionalShapes,
           otherItems,
           blockShapes,
           anyZone,
-          (applied, p, others, blocks, z) => {
-            const items = itemsWith(p, others);
-            fc.pre(overlappingProvisionals(applied, items).length === 1);
+          (applied, provisionals, others, blocks, z) => {
+            const items = itemsWith(provisionals, others);
+            const provisionalIds = overlappingProvisionalIds(applied, items);
+            fc.pre(provisionalIds.length >= 1);
             const expected = overlapsOther(applied, items, blocks)
               ? { ok: false, reason: "overlaps-existing" }
-              : { ok: true };
+              : { ok: true, provisionalIds };
             expect(check(applied, items, blocks, z)).toEqual(expected);
           },
         ),
       );
     });
 
+    // ほかの予約かブロック枠とも重なるときは、不可の理由が2つ当てはまる。どちらを返すかは決めない（冒頭の「結果の形」）
+    it("重なる承認済みの仮予約が0件なら不可（第二キープとしては受けない）", () => {
+      fc.assert(
+        fc.property(
+          reservationShape,
+          provisionalShapes,
+          otherItems,
+          blockShapes,
+          anyZone,
+          (applied, provisionals, others, blocks, z) => {
+            const items = itemsWith(provisionals, others);
+            fc.pre(overlappingProvisionalIds(applied, items).length === 0);
+            const result = check(applied, items, blocks, z);
+            if (overlapsOther(applied, items, blocks)) {
+              expect([
+                { ok: false, reason: "overlaps-existing" },
+                { ok: false, reason: "no-provisional-to-hold" },
+              ]).toContainEqual(result);
+            } else {
+              expect(result).toEqual({ ok: false, reason: "no-provisional-to-hold" });
+            }
+          },
+        ),
+      );
+    });
+
     // 重ならない予約とブロック枠から始めて、第二キープの申込を順に受け付ける（受け付けたものは承認待ちか、承認して第二キープにする）。
-    // どの順でも、第二キープと仮予約1件の組を除いて占有区間は重ならない（第二キープどうしも、承認待ちを含めて重ならない）。
-    // 1件の仮予約に、重ならない第二キープが何件付いてもよい
+    // どの順でも、第二キープと承認済みの仮予約の組を除いて占有区間は重ならない（第二キープは2件以上の仮予約にまたがってもよい。
+    // 第二キープどうしは、承認待ちを含めて重ならない）。1件の仮予約に、重ならない第二キープが何件付いてもよい。
+    // どの仮予約とも重ならない第二キープはできない
     it("第二キープの申込を続けて受け付けても、INV-1 は崩れない", () => {
       const initialStatus = fc.constantFrom<ReservationStatus>(
         "pending-provisional",
@@ -434,9 +524,8 @@ describe("第二キープ", () => {
               }
             }
 
+            // 申込は、重なる承認済みの仮予約が0件・1件・2件以上のどれでも出す
             for (const { shape, approve } of applications) {
-              // 未決事項に当たる申込（重なる承認済みの仮予約が1件でない）は出さない
-              if (overlappingProvisionals(shape, items).length !== 1) continue;
               if (check(shape, items, blocks, z).ok) {
                 items.push({ shape, status: approve ? "second-hold" : "pending-second-hold" });
               }
@@ -454,6 +543,15 @@ describe("第二キープ", () => {
                 expect(occupiedOverlaps(a.shape, block), `${a.status} とブロック枠が重なる`).toBe(
                   false,
                 );
+              }
+              if (isSecondHold(a.status)) {
+                expect(
+                  items.some(
+                    ({ shape, status }) =>
+                      status === "provisional" && occupiedOverlaps(a.shape, shape),
+                  ),
+                  `${a.status} がどの承認済みの仮予約とも重ならない`,
+                ).toBe(true);
               }
             }
           },
