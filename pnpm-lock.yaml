@@ -230,10 +230,22 @@ importers:
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.9)
+      '@zebra/booking-core':
+        specifier: workspace:*
+        version: link:../../packages/booking-core
+      '@zebra/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       hono:
         specifier: 4.13.9
         version: 4.13.9
+      luxon:
+        specifier: 3.7.2
+        version: 3.7.2
     devDependencies:
+      '@types/luxon':
+        specifier: 3.7.6
+        version: 3.7.6
       '@types/node':
         specifier: 24.19.0
         version: 24.19.0
