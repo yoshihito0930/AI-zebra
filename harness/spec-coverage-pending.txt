@@ -5,7 +5,6 @@
 # docs/product-specs/booking.md
 申込フォーム
 管理者による予約の直接入力とブロック枠
-予約の変更
 
 # docs/product-specs/index.md
 Googleカレンダーの取り込み（並行稼働のため）
