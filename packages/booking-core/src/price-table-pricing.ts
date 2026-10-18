@@ -122,5 +122,6 @@ const TAX_INCLUDED_DENOMINATOR = 10;
  */
 function addConsumptionTax(subtotalExcludingTax: number): number {
   const scaled = subtotalExcludingTax * TAX_INCLUDED_NUMERATOR;
+  // eslint-disable-next-line no-restricted-syntax -- INV-9：消費税の1円未満の切り捨ては、ここだけで行う（割り切れる形にしてから割る）
   return (scaled - (scaled % TAX_INCLUDED_DENOMINATOR)) / TAX_INCLUDED_DENOMINATOR;
 }

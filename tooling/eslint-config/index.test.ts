@@ -69,3 +69,55 @@ describe("INV-6：SES を呼べるのは apps/api/src/mail の中だけ", () => 
     expect(await ruleIds("apps/api/src/x.ts", v1)).toContain("no-restricted-imports");
   });
 });
+
+describe("INV-9：金額は整数で扱い、端数の処理は決めた場所だけ", () => {
+  it.each([
+    ["小数のリテラル", "export const rate = 1.1;"],
+    ["Math.round", "export const f = (x: number) => Math.round(x);"],
+    ["Math.floor", "export const f = (x: number) => Math.floor(x);"],
+    ["Math.ceil", "export const f = (x: number) => Math.ceil(x);"],
+    ["Math.trunc", "export const f = (x: number) => Math.trunc(x);"],
+    ["toFixed", "export const f = (x: number) => x.toFixed(0);"],
+    ["parseFloat", 'export const x = parseFloat("1.5");'],
+    ["Number.parseFloat", 'export const x = Number.parseFloat("1.5");'],
+    ["割り算", "export const f = (x: number) => x / 10;"],
+    ["割り算の代入", "export const f = (x: number) => { let y = x; y /= 10; return y; };"],
+  ])("packages/booking-core で %s はエラー", async (_, code) => {
+    expect(await ruleIds("packages/booking-core/src/x.ts", code)).toContain("no-restricted-syntax");
+  });
+
+  it("packages/contracts でも割り算はエラー", async () => {
+    const code = "export const f = (x: number) => x / 10;";
+    expect(await ruleIds("packages/contracts/src/x.ts", code)).toContain("no-restricted-syntax");
+  });
+
+  it.each([
+    ["整数の掛け算と余り", "export const f = (x: number) => (x * 11) % 10;"],
+    ["区切りのある整数", "export const yen = 2_500;"],
+    ["小数点を含む文字列", 'export const v = "1.1";'],
+  ])("%s はエラーにしない", async (_, code) => {
+    expect(await ruleIds("packages/booking-core/src/x.ts", code)).toEqual([]);
+  });
+
+  it("理由を書いた eslint-disable のコメントがあれば、割り算を使える（決めた場所）", async () => {
+    const code =
+      "export const f = (x: number) =>\n  // eslint-disable-next-line no-restricted-syntax -- INV-9：ここだけで切り捨てる\n  (x - (x % 10)) / 10;";
+    expect(await ruleIds("packages/booking-core/src/x.ts", code)).toEqual([]);
+  });
+
+  it("テストファイルでは小数を使える（期待値や、通さない値を書くため）", async () => {
+    expect(
+      await ruleIds("packages/booking-core/src/x.test.ts", "export const x = 28737.5;"),
+    ).toEqual([]);
+  });
+
+  it("金額を計算しない UI のコードでは小数を使える", async () => {
+    expect(await ruleIds("apps/admin/src/x.ts", "export const opacity = 0.5;")).toEqual([]);
+  });
+
+  it("金額のルールを足しても、packages/booking-core の Date.now() は引き続きエラー", async () => {
+    expect(
+      await ruleIds("packages/booking-core/src/x.ts", "export const t = Date.now();"),
+    ).toContain("no-restricted-syntax");
+  });
+});

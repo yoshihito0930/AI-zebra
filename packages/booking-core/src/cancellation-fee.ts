@@ -96,5 +96,6 @@ const PERCENT_DENOMINATOR = 100;
  */
 function applyRate(amount: Yen, ratePercent: CancellationFeeRatePercent): number {
   const scaled = amount * ratePercent;
+  // eslint-disable-next-line no-restricted-syntax -- INV-9：キャンセル料の1円未満の切り捨ては、ここだけで行う（割り切れる形にしてから割る）
   return (scaled - (scaled % PERCENT_DENOMINATOR)) / PERCENT_DENOMINATOR;
 }
