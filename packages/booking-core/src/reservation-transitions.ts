@@ -12,9 +12,9 @@ import {
   holdsSlots,
   occupiedRangeOf,
   overlaps,
-} from "./availability";
-import { type CancellationFeeRatePercent, calculateCancellationFee } from "./cancellation-fee";
-import { provisionalDeadline } from "./provisional-deadline";
+} from "./availability.ts";
+import { type CancellationFeeRatePercent, calculateCancellationFee } from "./cancellation-fee.ts";
+import { provisionalDeadline } from "./provisional-deadline.ts";
 
 /**
  * 予約。空き判定の ExistingReservation（id・status・start・end・bufferMinutes）に、次を足したもの

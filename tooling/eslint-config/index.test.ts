@@ -121,3 +121,38 @@ describe("INV-9：金額は整数で扱い、端数の処理は決めた場所�
     ).toContain("no-restricted-syntax");
   });
 });
+
+describe("Node で動かすコードの相対 import には拡張子を付ける", () => {
+  it.each([
+    ["packages/contracts/src/x.ts", 'export { Yen } from "./money";'],
+    [
+      "packages/booking-core/src/x.ts",
+      'import { usageDate } from "./jst-time";\nexport const f = usageDate;',
+    ],
+    ["apps/api/src/x.ts", 'export * from "./db/client";'],
+    ["packages/booking-core/src/x.ts", 'export const m = import("./jst-time");'],
+  ])("%s の拡張子のない相対 import はエラー", async (file, code) => {
+    expect(await ruleIds(file, code)).toContain("no-restricted-syntax");
+  });
+
+  it.each([
+    'export { Yen } from "./money.ts";',
+    'import { DateTime } from "luxon";\nexport const d = DateTime;',
+    'export { z } from "zod";',
+  ])("拡張子付きの相対 import とパッケージの import はエラーにしない：%s", async (code) => {
+    expect(await ruleIds("packages/contracts/src/x.ts", code)).toEqual([]);
+  });
+
+  it("テストファイルは対象外（Vitest が解決するため）", async () => {
+    expect(
+      await ruleIds("packages/contracts/src/x.test.ts", 'export { Yen } from "./money";'),
+    ).toEqual([]);
+  });
+
+  it("packages/clock でも止め、Date.now() は今までどおり使える", async () => {
+    expect(await ruleIds("packages/clock/src/x.ts", 'export * from "./y";')).toContain(
+      "no-restricted-syntax",
+    );
+    expect(await ruleIds("packages/clock/src/x.ts", "export const t = Date.now();")).toEqual([]);
+  });
+});

@@ -1,5 +1,5 @@
 import type { DateTime } from "luxon";
-import { usageDate } from "./jst-time";
+import { usageDate } from "./jst-time.ts";
 
 // 仮予約の期限は、利用日の 7 日前の 18:00（JST）
 const DAYS_BEFORE_USAGE_DATE = 7;
