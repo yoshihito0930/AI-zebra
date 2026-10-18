@@ -42,6 +42,25 @@ const noDirectCurrentTime = [
   { selector: "CallExpression[callee.name='Date']", message: currentTimeMessage },
 ];
 
+// INV-9：金額は整数（円）で扱い、浮動小数で計算しない。端数の処理は決めた1か所だけで行う。
+// 金額を計算する packages/booking-core と packages/contracts（テスト以外）で、小数・丸め・割り算を止める。
+// 端数を切り捨てる決めた場所（消費税、キャンセル料）だけ、理由を書いた eslint-disable のコメントで割り算を許す
+const moneyMessage =
+  "INV-9：金額は整数（円）で扱う。小数・丸め・割り算は使わない。端数の処理は決めた場所（消費税・キャンセル料の切り捨て）だけで、理由を書いた eslint-disable のコメントを付けて行う。";
+const noFloatingPointMoney = [
+  { selector: "Literal[raw=/^\\d[\\d_]*\\.\\d/]", message: moneyMessage },
+  {
+    selector:
+      "CallExpression[callee.object.name='Math'][callee.property.name=/^(round|floor|ceil|trunc)$/]",
+    message: moneyMessage,
+  },
+  { selector: "CallExpression[callee.property.name='toFixed']", message: moneyMessage },
+  { selector: "CallExpression[callee.name='parseFloat']", message: moneyMessage },
+  { selector: "CallExpression[callee.property.name='parseFloat']", message: moneyMessage },
+  { selector: "BinaryExpression[operator='/']", message: moneyMessage },
+  { selector: "AssignmentExpression[operator='/=']", message: moneyMessage },
+];
+
 export default tseslint.config(
   {
     ignores: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.astro/**"],
@@ -68,6 +87,13 @@ export default tseslint.config(
     files: ["apps/api/src/mail/**"],
     rules: {
       "no-restricted-imports": ["error", { patterns: [otherDateLibraries] }],
+    },
+  },
+  {
+    files: ["packages/booking-core/src/**", "packages/contracts/src/**"],
+    ignores: ["**/*.test.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...noDirectCurrentTime, ...noFloatingPointMoney],
     },
   },
   {
