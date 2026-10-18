@@ -1119,6 +1119,78 @@ describe("変更の保存", () => {
     expect(await dayItem("2026-10-19")).toBeUndefined();
     expect((await getReservation(store, a))?.updatedAt.toMillis()).toBe(operatedAt.toMillis());
   });
+
+  // reservation-model.md「金額」：変更では、人数・ホリゾントの養生・プラン・機材保険・オプションと確定金額を予約の値に書き換え、
+  // 申込のときの見積は残し、計算し直した見積はその変更の履歴に残す。
+  // 申込は 4人・養生なし（プランA）・機材保険なし・オプションなし、見積は税抜 10,000円・税込 11,000円（application）。
+  // 変更後の中身は 12人・養生なし（11人以上で養生なしなのでプランB）・機材保険あり・オプション glitter。
+  // 計算し直した見積（booking.md「料金」）：10:00–13:00 は通常帯なので 2,750 × 6 + 1,000 + 2,000 = 19,500（税抜）、税込 21,450
+  const changedContent: ReservationChangeContent = {
+    partySize: 12,
+    cycloramaFloorProtection: false,
+    equipmentInsurance: true,
+    optionIds: ["glitter"],
+  };
+  const recalculatedEstimate = {
+    subtotalExcludingTax: Yen.parse(19_500),
+    estimateIncludingTax: Yen.parse(21_450),
+  };
+
+  async function changeContentOfA(): Promise<string> {
+    const a = await applyApproved("firm", "2026-10-20T10:00", "2026-10-20T12:00", 11_000);
+    await operateOk({
+      kind: "change",
+      reservationId: a,
+      start: jst("2026-10-20T10:00"),
+      end: jst("2026-10-20T13:00"),
+      content: changedContent,
+      confirmedPrice: Yen.parse(21_450),
+      priceTable,
+    });
+    return a;
+  }
+
+  it("本予約 A 10/20 10:00–12:00（4人・養生なし・プランA・機材保険なし・オプションなし、確定金額 11,000円）を、10:00–13:00・12人・養生なし・機材保険あり・オプション glitter・確定金額 21,450円に変更：予約の人数・養生・プラン（B）・機材保険・オプション・確定金額は新しい値になり、申込のときの見積（税抜 10,000円・税込 11,000円）は変わらない", async () => {
+    const a = await changeContentOfA();
+
+    const detail = await getReservation(store, a);
+    expect(detail?.partySize).toBe(12);
+    expect(detail?.cycloramaFloorProtection).toBe(false);
+    expect(detail?.planId).toBe("B");
+    expect(detail?.equipmentInsurance).toBe(true);
+    expect(detail?.optionIds).toEqual(["glitter"]);
+    expect(detail?.confirmedPrice).toBe(21_450);
+    expect(detail?.estimate).toEqual({
+      subtotalExcludingTax: Yen.parse(10_000),
+      estimateIncludingTax: Yen.parse(11_000),
+    });
+  });
+
+  it("同じ変更の履歴：計算し直した見積（税抜 19,500円・税込 21,450円）と、中身の前後（4人・養生なし・プランA・機材保険なし・オプションなし・確定金額 11,000円 → 12人・養生なし・プランB・機材保険あり・オプション glitter・確定金額 21,450円）が残る", async () => {
+    const a = await changeContentOfA();
+
+    const entry = await lastHistory(a);
+    expect(entry?.operation).toBe("change");
+    expect(entry).toMatchObject({
+      estimate: recalculatedEstimate,
+      before: {
+        partySize: 4,
+        cycloramaFloorProtection: false,
+        planId: "A",
+        equipmentInsurance: false,
+        optionIds: [],
+        confirmedPrice: 11_000,
+      },
+      after: {
+        partySize: 12,
+        cycloramaFloorProtection: false,
+        planId: "B",
+        equipmentInsurance: true,
+        optionIds: ["glitter"],
+        confirmedPrice: 21_450,
+      },
+    });
+  });
 });
 
 describe("日をまたぐ予約と、JST の 0:00 で終わる占有区間", () => {
