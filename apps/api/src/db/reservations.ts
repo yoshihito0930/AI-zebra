@@ -144,6 +144,7 @@ export async function saveApplication(
       ...(judged.provisionalIds === undefined ? {} : { provisionalIds: judged.provisionalIds }),
       start: occupied.start,
       end: occupied.end,
+      bufferMinutes: APPLICATION_BUFFER_MINUTES,
     };
     const transactItems: TransactWriteItem[] = [
       ...dayStates.map((state) => dayWriteItem(store, state, newInterval)),
@@ -175,7 +176,16 @@ export interface OccupiedInterval {
   /** 占有区間 [start, end)（バッファ込み） */
   readonly start: DateTime;
   readonly end: DateTime;
+  /**
+   * バッファの長さ（分）。予約は30か60、ブロック枠は0・30・60（dynamodb-keys.md「アイテム」）。
+   * 公開APIで予約区間（end − バッファ）を返すのに使う。書くときは必ず入れる。
+   * 読んだときにないのは、bufferMinutes を書く前の古い区間だけ（書き直すときも、ないまま残す）
+   */
+  readonly bufferMinutes?: IntervalBufferMinutes;
 }
+
+/** 日ごとのアイテムの区間のバッファ（分） */
+export type IntervalBufferMinutes = 0 | 30 | 60;
 
 /**
  * 期間（JST の日付 YYYY-MM-DD。from と to を含む）の日ごとのアイテムから、占有区間を読み出す（空き状況に使う）。
@@ -707,6 +717,9 @@ export function intervalAttribute(interval: OccupiedInterval): AttributeValue {
         : { provisionalIds: stringList(interval.provisionalIds) }),
       start: { S: utcIso(interval.start) },
       end: { S: utcIso(interval.end) },
+      ...(interval.bufferMinutes === undefined
+        ? {}
+        : { bufferMinutes: { N: String(interval.bufferMinutes) } }),
     },
   };
 }
@@ -814,6 +827,8 @@ function parseInterval(map: Item, where: string): OccupiedInterval {
   const start = readInstant(map, "start", at);
   const end = readInstant(map, "end", at);
   if (end.toMillis() <= start.toMillis()) throw malformed(at, "end");
+  const bufferMinutes =
+    map["bufferMinutes"] === undefined ? undefined : readIntervalBufferMinutes(map, kind, at);
   return {
     kind,
     id,
@@ -821,7 +836,20 @@ function parseInterval(map: Item, where: string): OccupiedInterval {
     ...(provisionalIds === undefined ? {} : { provisionalIds }),
     start,
     end,
+    ...(bufferMinutes === undefined ? {} : { bufferMinutes }),
   };
+}
+
+/** 日ごとのアイテムの区間の bufferMinutes。予約は30か60、ブロック枠は0・30・60（dynamodb-keys.md「アイテム」） */
+function readIntervalBufferMinutes(
+  map: Item,
+  kind: "reservation" | "block",
+  where: string,
+): IntervalBufferMinutes {
+  const value = readNumber(map, "bufferMinutes", where);
+  if (value === 30 || value === 60) return value;
+  if (value === 0 && kind === "block") return value;
+  throw malformed(where, "bufferMinutes");
 }
 
 function parseSnapshot(map: Item, where: string): HistorySnapshot {

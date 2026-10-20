@@ -704,7 +704,8 @@ async function lastSequence(store: ReservationStore, pk: string, prefix: string)
 
 /**
  * 書き換えたあとの日の占有区間。書き換える予約の占有区間は、操作のあとも枠を確保していてその日にかかるなら新しい値にし、
- * そうでなければ除く。ほかの占有区間はそのまま残す
+ * そうでなければ除く。ほかの占有区間は、読んだまま（bufferMinutes も含めて）残す。
+ * 書き換える予約の bufferMinutes は、META のバッファ（操作のあとの値）を入れる
  */
 function nextIntervals(
   dayState: DayState,
@@ -727,6 +728,7 @@ function nextIntervals(
         : {}),
       start: occupied.start,
       end: occupied.end,
+      bufferMinutes: reservation.bufferMinutes,
     });
   };
   for (const interval of dayState.intervals) {
