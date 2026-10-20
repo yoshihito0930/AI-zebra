@@ -2,7 +2,7 @@
 // INV-9（金額は整数の円。端数の処理はこのファイルの addConsumptionTax だけ）、INV-7（深夜帯の判定は JST）
 import { type PriceTable, Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
-import { SLOT_MINUTES, isLateNight, isOn30MinuteBoundary } from "./jst-time";
+import { SLOT_MINUTES, isLateNight, isOn30MinuteBoundary } from "./jst-time.ts";
 
 /** 料金表の計算に渡す予約 */
 export interface PriceTableQuoteInput {

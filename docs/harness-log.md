@@ -135,8 +135,8 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足したもの：この記録。実装の PR の本文で、型を変えたことを人間に確かめてもらう
 - 次への改善：テスト担当は、既存のスタブの型にある値（列挙の文字列）を期待するときは、その型の値として書く（`satisfies HistoryOperation` など）。型の外の値なら型チェックで止まる
 
-### 2026-10-18 app.ts が契約を読むようになり、`pnpm dev:api`（node で直接 .ts を動かす）が起動しなくなった
-- 起きたこと：公開APIの予約状況のルートを app.ts につないだので、server.ts から packages/contracts と packages/booking-core を読むようになった。両パッケージは拡張子なしの相対 import（`./money` など）を使っており、`node --watch src/server.ts`（Node の型の除去で直接動かす）では解決できずに止まる。Vitest は解決できるので、テスト・CI では見つからない
-- 足りなかったもの：ツール（API をローカルで起動できるかの確認。CI にない）、制約（パッケージの import の書き方の決まり）
-- 足したもの：この記録。直し方（パッケージの相対 import に `.ts` を付ける、起動に tsx などの依存を足す、ビルドする）は人間に PR で質問した
-- 次への改善：API を起動して /health を叩く確認を CI に足すか、検討する
+### 2026-10-19 API が Node で起動しなくなるのを、テストが見つけられなかった
+- 起きたこと：公開APIの予約状況の実装の PR（#55）で、apps/api が contracts と booking-core を読むようになり、`pnpm dev:api`（`node src/server.ts`）が `ERR_MODULE_NOT_FOUND` で起動しなくなった。両パッケージは拡張子のない相対 import（`./money`）を使っていて、Node はそれを解決できない。Vitest は解決できるので、単体テストも統合テストも CI も通っていた。実装担当が手元で気づき、PR で質問した
+- 足りなかったもの：ツール（Node でそのまま動かしたときの確かめ方がなかった。拡張子の書き方がパッケージごとにばらばらだった）
+- 足したもの：ユーザーの判断で、拡張子 .ts にそろえた。contracts・booking-core・clock の tsconfig で拡張子付きの import を許し、実装の相対 import に .ts を付けた。Node で動かすコード（apps/api と、それが読む packages。テストは除く）の拡張子のない相対 import を lint で止める。apps/api/src/server.test.ts で、Node で server.ts を起動して /health に答えることを確かめる（わざと拡張子を外すと落ちることを確かめた）
+- 次への改善：Vitest で通っても、本番と同じ動かし方で動くとは限らない。入口（server.ts、lambda.ts）は、本番に近い動かし方で一度は起動するテストを持つ

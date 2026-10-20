@@ -2,7 +2,7 @@
 // 入出力を持たない純粋な関数。現在時刻は使わない（INV-5、INV-7）。
 // 枠と予約の書き込み（INV-2）と、下書きの保存・送信（INV-6）は呼び出す側が行う。
 import type { ReservationStatus, Yen } from "@zebra/contracts";
-import type { TimeRange } from "./availability";
+import type { TimeRange } from "./availability.ts";
 import {
   type Reservation,
   type ReservationDraft,
@@ -10,7 +10,7 @@ import {
   holdingRanges,
   isSecondHoldStatus,
   subtractRanges,
-} from "./reservation-transitions";
+} from "./reservation-transitions.ts";
 
 /** 承認の下書き。管理者が決めた確定金額（税込）を差し込む（booking.md「確認メール」） */
 export interface ApprovalDraft {

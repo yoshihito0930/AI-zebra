@@ -2,7 +2,7 @@
 // 料金の計算とプランの決め方はこのデータを受け取って計算する。管理画面で変えられるようにするときも、この形で読み書きする。
 // ホリゾントは英語の cyclorama（撮影スタジオの背景の壁）と呼ぶ。
 import { z } from "zod";
-import { Yen } from "./money";
+import { Yen } from "./money.ts";
 
 const Id = z.string().min(1);
 

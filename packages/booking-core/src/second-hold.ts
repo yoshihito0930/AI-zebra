@@ -9,7 +9,7 @@ import {
   occupiedRangeOf,
   overlaps,
   overlapsAnyHolding,
-} from "./availability";
+} from "./availability.ts";
 
 /** 第二キープの申込。予約区間 [start, end) と、後ろのバッファ。既存の予約とブロック枠は、取消・終了を含めて渡してよい */
 export interface SecondHoldApplication {

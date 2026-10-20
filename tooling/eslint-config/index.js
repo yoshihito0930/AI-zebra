@@ -61,6 +61,19 @@ const noFloatingPointMoney = [
   { selector: "AssignmentExpression[operator='/=']", message: moneyMessage },
 ];
 
+// Node で TypeScript をそのまま動かすパッケージ（apps/api と、それが読む packages）では、相対 import に拡張子を付ける。
+// Node は拡張子のない相対 import（./money）を解決できない。Vitest は解決できるので、テストでは見つからない（2026-10-19、harness-log）
+const extensionMessage =
+  "Node で動かすコードの相対 import には拡張子（.ts）を付ける。拡張子がないと、Node で起動したときに見つからない。";
+const relativeWithoutExtension =
+  "[source.value=/^\\.{1,2}\\//]:not([source.value=/\\.(ts|tsx|js|mjs|cjs|json)$/])";
+const noExtensionlessRelativeImport = [
+  "ImportDeclaration",
+  "ExportNamedDeclaration",
+  "ExportAllDeclaration",
+  "ImportExpression",
+].map((node) => ({ selector: `${node}${relativeWithoutExtension}`, message: extensionMessage }));
+
 export default tseslint.config(
   {
     ignores: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.astro/**"],
@@ -90,16 +103,29 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/booking-core/src/**", "packages/contracts/src/**"],
+    files: ["apps/api/src/**"],
     ignores: ["**/*.test.ts"],
     rules: {
-      "no-restricted-syntax": ["error", ...noDirectCurrentTime, ...noFloatingPointMoney],
+      "no-restricted-syntax": ["error", ...noDirectCurrentTime, ...noExtensionlessRelativeImport],
     },
   },
   {
+    files: ["packages/booking-core/src/**", "packages/contracts/src/**"],
+    ignores: ["**/*.test.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...noDirectCurrentTime,
+        ...noFloatingPointMoney,
+        ...noExtensionlessRelativeImport,
+      ],
+    },
+  },
+  {
+    // 現在時刻はここからだけ取得する（INV-7）ので、Date の直接の呼び出しを許す
     files: ["packages/clock/src/**"],
     rules: {
-      "no-restricted-syntax": "off",
+      "no-restricted-syntax": ["error", ...noExtensionlessRelativeImport],
     },
   },
 );

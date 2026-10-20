@@ -3,7 +3,7 @@
 import type { ReservationStatus } from "@zebra/contracts";
 import { Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
-import { jstDate, usageDate } from "./jst-time";
+import { jstDate, usageDate } from "./jst-time.ts";
 
 /** 取消せる予約の状態。取消・終了の予約は、さらに取消さない */
 export type CancellableStatus = Exclude<ReservationStatus, "cancelled" | "ended">;

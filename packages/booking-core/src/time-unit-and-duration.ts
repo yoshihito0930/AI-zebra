@@ -1,6 +1,6 @@
 // 時間の単位と利用時間（docs/product-specs/booking.md「時間の単位と利用時間」）
 import type { DateTime } from "luxon";
-import { DAYTIME_END_HOUR, DAYTIME_START_HOUR, JST, isOn30MinuteBoundary } from "./jst-time";
+import { DAYTIME_END_HOUR, DAYTIME_START_HOUR, JST, isOn30MinuteBoundary } from "./jst-time.ts";
 
 /**
  * 予約不可の理由。

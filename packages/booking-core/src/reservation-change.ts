@@ -9,8 +9,8 @@ import {
   occupiedRangeOf,
   overlaps,
   overlapsAnyHolding,
-} from "./availability";
-import { calculatePriceFromTable, decidePlanId } from "./price-table-pricing";
+} from "./availability.ts";
+import { calculatePriceFromTable, decidePlanId } from "./price-table-pricing.ts";
 import {
   type Reservation,
   type ReservationDraft,
@@ -19,7 +19,7 @@ import {
   occupiedOf,
   provisionalsStillHolding,
   subtractRanges,
-} from "./reservation-transitions";
+} from "./reservation-transitions.ts";
 
 /**
  * 変更後の申込内容のうち、見積の再計算に使うもの。
