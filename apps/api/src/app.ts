@@ -1,8 +1,18 @@
 // 予約API の本体。ローカルでは server.ts（Node サーバー）、本番では lambda.ts（Lambda）から同じ app を動かす
+import { currentPriceTable } from "@zebra/booking-core";
 import { Hono } from "hono";
+import { DateTime } from "luxon";
 import { createDynamoClient } from "./db/client.ts";
 import type { ReservationStore } from "./db/reservations.ts";
+import { createPublicApplicationRoute } from "./public/applications.ts";
 import { createPublicCalendarRoute } from "./public/calendar.ts";
+
+/**
+ * 現在時刻（INV-7）。本来は時計の部品（packages/clock）から取るが、まだ中身がないので、
+ * API で現在時刻を取る所をこの1か所に決める。ルートには関数として渡し、テストでは固定した時刻を渡す。
+ * packages/clock ができたら、ここだけを置き換える（lint が止める new Date()・Date.now() は使わない）
+ */
+const now = (): DateTime => DateTime.now();
 
 /** API の本体を組み立てる。読み書きするテーブルは引数で受け取る（テストからは DynamoDB Local のテーブルを渡せる） */
 export function createApp(store: ReservationStore): Hono {
@@ -13,6 +23,12 @@ export function createApp(store: ReservationStore): Hono {
 
   // 公開API（認証なし）：予約状況 GET /public/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD（INV-3）
   app.route("/public", createPublicCalendarRoute(store));
+
+  // 公開API（認証なし）：申込 POST /public/applications（booking.md「申込フォーム」。INV-3、INV-4）
+  app.route(
+    "/public",
+    createPublicApplicationRoute({ store, now, priceTable: currentPriceTable() }),
+  );
 
   return app;
 }
