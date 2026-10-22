@@ -3,7 +3,6 @@
 # このファイルの変更は人間がレビューする。
 
 # docs/product-specs/booking.md
-申込フォーム
 管理者による予約の直接入力とブロック枠
 
 # docs/product-specs/index.md
