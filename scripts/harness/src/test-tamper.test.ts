@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type Change, checkTamper, classify, parseNameStatus } from "./test-tamper.ts";
+import { type Change, checkTamper, classify, isStub, parseNameStatus } from "./test-tamper.ts";
 
 const config = {
   medium: ["packages/booking-core/src/**", "packages/contracts/src/**", "apps/api/src/public/**"],
@@ -35,6 +35,67 @@ describe("git diff --name-status を読む", () => {
       D("c.ts"),
       M("d.ts"),
     ]);
+  });
+});
+
+// PR #60 のスタブ（second-hold-application-deadline.ts）と同じ形
+const STUB_SOURCE = `// 第二キープ申込の締め切り
+import type { DateTime } from "luxon";
+
+export type Input = {
+  /** 開始 */
+  start: DateTime;
+  appliedAt: DateTime;
+};
+export interface Options { strict: boolean }
+export type Result = { ok: true } | { ok: false; reason: "past-provisional-deadline" };
+export type { Other } from "./other.ts";
+
+export function check(input: Input): Result;
+export function check(input: Input, options?: Options): Result {
+  void input;
+  void options;
+  throw new Error("未実装");
+}
+function helper(): void {
+  throw new Error("未実装");
+}
+`;
+
+describe("スタブ（型と「未実装」を投げる関数だけ）を見分ける", () => {
+  it("型の宣言・import・型だけの export・「未実装」を投げる関数だけ → スタブ", () => {
+    expect(isStub("packages/booking-core/src/deadline.ts", STUB_SOURCE)).toBe(true);
+  });
+
+  it("型の宣言だけ → スタブ（振る舞いを持たない）", () => {
+    expect(isStub("packages/booking-core/src/types.ts", "export type A = { x: number };\n")).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    ["中身で計算している", `export function f(a: number): number {\n  return a + 1;\n}\n`],
+    [
+      "「未実装」を投げる前に、ほかの文がある",
+      `export function f(a: number): number {\n  if (a > 0) return a;\n  throw new Error("未実装");\n}\n`,
+    ],
+    [
+      "「未実装」でないエラーを投げる",
+      `export function f(): void {\n  throw new Error("not implemented");\n}\n`,
+    ],
+    ["値の宣言（const）がある", `export const RATE = 10;\n`],
+    ["Zod のスキーマ（値）がある", `import { z } from "zod";\nexport const A = z.string();\n`],
+    ["アロー関数の const", `export const f = () => {\n  throw new Error("未実装");\n};\n`],
+    ["enum がある", `export enum Kind {\n  A,\n}\n`],
+    ["値の re-export がある", `export { f } from "./f.ts";\n`],
+    ["トップレベルの文がある", `console.log("x");\n`],
+  ])("%s → スタブではない", (_, source) => {
+    expect(isStub("packages/booking-core/src/x.ts", source)).toBe(false);
+  });
+
+  it(".ts 以外 → スタブではない", () => {
+    expect(isStub("apps/site-zebra/src/pages/index.astro", "")).toBe(false);
+    expect(isStub("apps/admin/src/App.tsx", "export type A = string;\n")).toBe(false);
   });
 });
 
@@ -110,6 +171,29 @@ describe("既存の自律度「中」のテストの改ざんを見つける", (
       { kind: "existing-test-changed", tests: [TEST], implementations: [IMPL] },
       { kind: "expected-failure-not-new", entries: [TEST] },
     ]);
+  });
+
+  it("既存のテストの変更と、新しいスタブ → 成功（スタブは実装と数えない。PR #38・#60/#61）", () => {
+    const stub = "packages/booking-core/src/deadline.ts";
+    expect(checkTamper([M(TEST), A(stub)], config, [], [stub])).toEqual([]);
+  });
+
+  it("新しいスタブと、新しいテストと、そのPRで変更したテストを失敗予定リストに足す → 成功（実装を含まないPR）", () => {
+    const stub = "packages/booking-core/src/deadline.ts";
+    const newTest = "packages/booking-core/src/deadline.test.ts";
+    const changes = [A(stub), A(newTest), M(TEST), M("harness/expected-failures.txt")];
+    expect(checkTamper(changes, config, [newTest, TEST], [stub])).toEqual([]);
+  });
+
+  it("既存のテストの変更と、新しいスタブと、実装 → 失敗（実装だけを挙げる）", () => {
+    const stub = "packages/booking-core/src/deadline.ts";
+    expect(checkTamper([M(TEST), A(stub), M(IMPL)], config, [], [stub])).toEqual([
+      { kind: "existing-test-changed", tests: [TEST], implementations: [IMPL] },
+    ]);
+  });
+
+  it("既存のファイルは、スタブとして渡されても実装と数える（足したファイルだけを見る）", () => {
+    expect(checkTamper([M(TEST), M(IMPL)], config, [], [IMPL])).toHaveLength(1);
   });
 
   it("消したテストを失敗予定リストに足す → 失敗", () => {
