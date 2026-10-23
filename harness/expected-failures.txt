@@ -4,3 +4,4 @@
 # CI（expected-failures）は、ここにあるテストが本当に失敗するかを確かめる。通るようになったら消さないと失敗する。
 # 実装のPRで既存のテストをここに足すことはできない（test-tamper が止める）。
 packages/booking-core/src/second-hold-application-deadline.test.ts
+apps/api/src/public/applications.int.test.ts
