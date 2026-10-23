@@ -41,7 +41,7 @@ import {
 // packages/contracts の ApplicationRequest・ApplicationAccepted・ApplicationRejected・ReceiptNumber。
 // 時間の単位・締め切り・料金・空き判定の細かい決まりは booking-core と db の単体・統合テストで確かめているので、
 // ここでは代表的な行と、それが API の返事と DB に正しく現れること（不可なら何も残らないこと）を確かめる。
-// 第二キープ申込の締め切りは未決事項（booking.md）なのでテストしない。受付通知（確認メール）は次の PR で扱う。
+// 第二キープ申込の締め切り（仮予約の期限と同じ）は、「申込の締め切り」の第二キープ申込の例の表の行で確かめる。受付通知（確認メール）は次の PR で扱う。
 // 予約の META と受付番号のアイテムの属性名は資料にないので、予約の詳細（getReservation）とアイテムの中の値で確かめる。
 // 申込の回数の制限、CAPTCHA、CORS などは資料にないのでテストしない。
 
@@ -780,6 +780,56 @@ describe("申込の API：申込の締め切り", () => {
     it.each(rows)("%s", async (_, appliedLocal, firm, provisional) => {
       await check("firm", appliedLocal, firm, "utc");
       await check("provisional", appliedLocal, provisional, "utc");
+    });
+  });
+
+  // 同じく開始が 10/20 15:00 の場合の、第二キープ申込（承認済みの仮予約と重なり、ほかの条件は満たすとき）。
+  // 「ほかの条件」を満たすよう、承認済みの仮予約 P 10/20 15:00–17:00 を準備し（申込 10/01 12:00、承認 10/02 12:00）、
+  // 第二キープの希望を P と同じ 15:00–17:00 にする。各行はテストごとに新しいテーブルで確かめる
+  describe("第二キープ申込（承認済みの仮予約と重なり、ほかの条件は満たすとき）", () => {
+    const secondHoldRows: [string, string, Expectation][] = [
+      ["開始 10/20 15:00、申込 10/13 17:59：第二キープ申込は受付", "2026-10-13T17:59", "accepted"],
+      [
+        "開始 10/20 15:00、申込 10/13 18:00：第二キープ申込は不可（期限を過ぎた）",
+        "2026-10-13T18:00",
+        "past-provisional-deadline",
+      ],
+    ];
+
+    async function checkSecondHold(
+      appliedLocal: string,
+      expected: Expectation,
+      zone: Zone,
+    ): Promise<void> {
+      const p = await prepareApproved("provisional", "2026-10-20T15:00", "2026-10-20T17:00");
+      const before = await scanAll();
+      const beforeIds = await reservationIds();
+      const make = zone === "jst" ? body : utcBody;
+      const now = zone === "jst" ? jst(appliedLocal) : jst(appliedLocal).toUTC();
+
+      const result = await submit(make("second-hold", "2026-10-20T15:00", "2026-10-20T17:00"), {
+        now: () => now,
+      });
+
+      if (expected === "accepted") {
+        expect(result.ok, `second-hold ${appliedLocal} ${zone}`).toBe(true);
+        const detail = await getReservation(store, await newReservationId(beforeIds));
+        expect(detail?.status).toBe("pending-second-hold");
+        expect(detail?.provisionalIds).toEqual([p]);
+      } else {
+        expect(result, `second-hold ${appliedLocal} ${zone}`).toEqual(rejected(expected));
+        await expectNothingWritten(before);
+      }
+    }
+
+    it.each(secondHoldRows)("%s", async (_, appliedLocal, expected) => {
+      await checkSecondHold(appliedLocal, expected, "jst");
+    });
+
+    describe("UTC で渡しても同じ結果（INV-7）", () => {
+      it.each(secondHoldRows)("%s", async (_, appliedLocal, expected) => {
+        await checkSecondHold(appliedLocal, expected, "utc");
+      });
     });
   });
 });
