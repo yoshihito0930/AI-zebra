@@ -9,6 +9,7 @@
 import { randomInt } from "node:crypto";
 import {
   checkApplicationDeadline,
+  checkSecondHoldApplicationDeadline,
   checkTimeUnitAndDuration,
   calculatePriceFromTable,
   decidePlanId,
@@ -94,12 +95,13 @@ export async function submitApplication(
   if (!timeUnit.ok) return rejected(timeUnit.reason);
 
   // 3. 申込の締め切り（booking.md「申込の締め切り」）。
-  // 第二キープ申込の締め切りは未決事項（booking.md）なので、本予約申込と仮予約申込だけを確かめる
+  // 本予約申込と仮予約申込は checkApplicationDeadline、第二キープ申込は仮予約の期限まで（checkSecondHoldApplicationDeadline）
   const now = deps.now();
-  if (request.kind !== "second-hold") {
-    const deadline = checkApplicationDeadline({ kind: request.kind, start, appliedAt: now });
-    if (!deadline.ok) return rejected(deadline.reason);
-  }
+  const deadline =
+    request.kind === "second-hold"
+      ? checkSecondHoldApplicationDeadline({ start, appliedAt: now })
+      : checkApplicationDeadline({ kind: request.kind, start, appliedAt: now });
+  if (!deadline.ok) return rejected(deadline.reason);
 
   // 4. プランと見積（booking.md「料金」。INV-9。金額の計算は booking-core だけで行う）
   const planId = decidePlanId(deps.priceTable, {

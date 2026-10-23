@@ -35,6 +35,11 @@ export type {
   ReservationBufferMinutes,
   TimeRange,
 } from "./availability.ts";
+export { checkSecondHoldApplicationDeadline } from "./second-hold-application-deadline.ts";
+export type {
+  SecondHoldApplicationDeadlineInput,
+  SecondHoldApplicationDeadlineResult,
+} from "./second-hold-application-deadline.ts";
 export { checkSecondHoldApplication } from "./second-hold.ts";
 export type {
   SecondHoldApplication,

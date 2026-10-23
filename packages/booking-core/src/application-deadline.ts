@@ -2,7 +2,7 @@ import type { DateTime } from "luxon";
 import { provisionalDeadline } from "./provisional-deadline.ts";
 
 // 申込の種類（docs/product-specs/booking.md の「申込の締め切り」）。firm＝本予約申込、provisional＝仮予約申込。
-// 第二キープ申込の締め切りは仕様の未決事項なので、ここには入れない。
+// 第二キープ申込の締め切り（仮予約の期限まで）は second-hold-application-deadline.ts の checkSecondHoldApplicationDeadline で確かめる。
 export type ApplicationKind = "firm" | "provisional";
 
 // 申込を受け付けられない理由。
