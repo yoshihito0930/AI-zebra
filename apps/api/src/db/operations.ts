@@ -13,6 +13,10 @@ import {
   type TransactWriteItem,
   TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
+// holdsSlots と isSecondHoldStatus は booking-core の定義を使う（この層に同じ判定を書かない）。
+// - holdsSlots：日ごとのアイテム・META・PII に置く状態のうち、枠を確保しているもの（dynamodb-keys.md「アイテム」、INV-1）。
+//   取消・終了は日ごとのアイテムに入れず、META の GSI（STATUS#…）にも入れない
+// - isSecondHoldStatus：第二キープ（承認待ちを含む）か。付く仮予約の id を持つのは、この状態のときだけ（dynamodb-keys.md「アイテム」）
 import {
   type ExistingBlock,
   type Reservation,
@@ -20,10 +24,12 @@ import {
   applyReservationOperation,
   approveReservation,
   decidePlanId,
+  holdsSlots,
+  isSecondHoldStatus,
   occupiedRange,
   rejectReservation,
 } from "@zebra/booking-core";
-import type { PriceTable, ReservationStatus, Yen } from "@zebra/contracts";
+import type { PriceTable, Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
 import {
   DEFAULT_MAX_ATTEMPTS,
@@ -46,6 +52,7 @@ import {
   readDayForWrite,
   readString,
   stringList,
+  toExistingBlock,
   utcIso,
 } from "./reservations.ts";
 
@@ -272,7 +279,11 @@ async function readOperationState(
   ]);
   const secondHoldDays: string[] = [];
   for (const interval of intervalsOf(days)) {
-    if (interval.kind === "reservation" && isSecondHoldStatus(interval.status)) {
+    if (
+      interval.kind === "reservation" &&
+      interval.status !== undefined &&
+      isSecondHoldStatus(interval.status)
+    ) {
       secondHoldDays.push(...daysWithEndDay(interval.start, interval.end));
     }
   }
@@ -285,8 +296,7 @@ async function readOperationState(
     if (interval.kind === "reservation") {
       ids.add(interval.id);
     } else {
-      // 占有区間（バッファ込み）をそのまま区間にし、バッファは0分（reservations.ts の toBookingCoreInput と同じ）
-      blocks.set(interval.id, { start: interval.start, end: interval.end, bufferMinutes: 0 });
+      blocks.set(interval.id, toExistingBlock(interval));
     }
   }
   const metas = await readMetas(store, [...ids]);
@@ -557,19 +567,6 @@ function daysToWrite(modified: readonly ModifiedReservation[]): {
     }
   }
   return { write, read };
-}
-
-/**
- * 日ごとのアイテム・META・PII に置く状態のうち、枠を確保しているもの（dynamodb-keys.md「アイテム」、INV-1）。
- * 取消・終了は日ごとのアイテムに入れず、META の GSI（STATUS#…）にも入れない
- */
-function holdsSlots(status: ReservationStatus): boolean {
-  return status !== "cancelled" && status !== "ended";
-}
-
-/** 第二キープ（承認待ちを含む）か。付く仮予約の id を持つのは、この状態のときだけ（dynamodb-keys.md「アイテム」） */
-function isSecondHoldStatus(status: ReservationStatus | undefined): boolean {
-  return status === "second-hold" || status === "pending-second-hold";
 }
 
 const HISTORY_OPERATION = {
