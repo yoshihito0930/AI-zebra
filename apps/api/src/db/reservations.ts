@@ -74,6 +74,12 @@ export interface ReservationApplication {
   readonly estimate: Estimate;
   readonly customer: CustomerInfo;
   readonly shooting: ShootingInfo;
+  /**
+   * 受付番号（packages/contracts の ReceiptNumber の形。API の層が作る）。省略できる。
+   * あれば予約の META に持ち、受付番号のアイテム RCPT#<受付番号> / META（予約の id を指す）を、
+   * 同じトランザクションで「まだないこと」を条件に作る（dynamodb-keys.md「アイテム」）
+   */
+  readonly receiptNumber?: string;
 }
 
 export interface SaveApplicationOptions {
@@ -94,13 +100,16 @@ export interface SaveApplicationOptions {
  * - 不可（枠を確保している予約かブロック枠と重なる）：{ ok: false, reason: "overlaps-existing" }
  * - 不可（第二キープ申込が、どの承認済みの仮予約とも重ならない）：{ ok: false, reason: "no-provisional-to-hold" }
  * - 混み合っている（版番号の衝突が続き、試す回数の上限を超えた）：{ ok: false, reason: "busy" }
+ * - 受付番号がすでに使われていた（受付番号を渡したときだけ）：{ ok: false, reason: "receipt-number-taken" }。
+ *   同じ番号でやり直しても通らないので、やり直さずに返す。別の番号で呼び直すかは呼ぶ側が決める
  * 不可や混み合っているときは、何も書かない（INV-2）
  */
 export type SaveApplicationResult =
   | { readonly ok: true; readonly id: string }
   | {
       readonly ok: false;
-      readonly reason: "overlaps-existing" | "no-provisional-to-hold" | "busy";
+      readonly reason:
+        "overlaps-existing" | "no-provisional-to-hold" | "busy" | "receipt-number-taken";
     };
 
 /**
@@ -146,9 +155,14 @@ export async function saveApplication(
       end: occupied.end,
       bufferMinutes: APPLICATION_BUFFER_MINUTES,
     };
+    const receiptItems =
+      application.receiptNumber === undefined
+        ? []
+        : [receiptWriteItem(store, application.receiptNumber, id)];
     const transactItems: TransactWriteItem[] = [
       ...dayStates.map((state) => dayWriteItem(store, state, newInterval)),
       ...reservationWriteItems(store, id, status, application, judged.provisionalIds, options.now),
+      ...receiptItems,
     ];
 
     if (options.beforeWrite !== undefined) await options.beforeWrite(attempt);
@@ -157,6 +171,10 @@ export async function saveApplication(
       await store.client.send(new TransactWriteItemsCommand({ TransactItems: transactItems }));
       return { ok: true, id };
     } catch (error) {
+      // 受付番号のアイテムが条件（まだないこと）で失敗した：同じ番号ではやり直しても通らない
+      if (receiptItems.length > 0 && failedOnCondition(error, transactItems.length - 1)) {
+        return { ok: false, reason: "receipt-number-taken" };
+      }
       // 4. 条件で失敗した（読んだあとに同じ日に別の書き込みがあった）なら、読み直してやり直す
       if (isRetryableConflict(error)) continue;
       throw error;
@@ -601,6 +619,9 @@ function reservationWriteItems(
     end: { S: utcIso(application.end) },
     bufferMinutes: { N: String(APPLICATION_BUFFER_MINUTES) },
     route: { S: "form" },
+    ...(application.receiptNumber === undefined
+      ? {}
+      : { receiptNumber: { S: application.receiptNumber } }),
     partySize: { N: String(application.partySize) },
     cycloramaFloorProtection: { BOOL: application.cycloramaFloorProtection },
     planId: { S: application.planId },
@@ -665,6 +686,36 @@ function reservationWriteItems(
   return [meta, pii, history].map((item) => ({
     Put: { TableName: store.tableName, Item: item, ConditionExpression: notExists },
   }));
+}
+
+/**
+ * 受付番号のアイテム RCPT#<受付番号> / META の書き込み。中身は予約の id だけ（個人情報は入れない。INV-10）。
+ * まだないことを条件にして、受付番号が重ならないことを DB で保証する（dynamodb-keys.md「アイテム」）
+ */
+function receiptWriteItem(
+  store: ReservationStore,
+  receiptNumber: string,
+  reservationId: string,
+): TransactWriteItem {
+  return {
+    Put: {
+      TableName: store.tableName,
+      Item: {
+        pk: { S: `RCPT#${receiptNumber}` },
+        sk: { S: "META" },
+        reservationId: { S: reservationId },
+      },
+      ConditionExpression: "attribute_not_exists(pk)",
+    },
+  };
+}
+
+/** トランザクションが、index 番目のアイテムの条件の失敗（ConditionalCheckFailed）で取り消されたか */
+function failedOnCondition(error: unknown, index: number): boolean {
+  if (!(error instanceof Error) || error.name !== "TransactionCanceledException") return false;
+  const reasons = (error as { CancellationReasons?: readonly { Code?: string }[] })
+    .CancellationReasons;
+  return reasons?.[index]?.Code === "ConditionalCheckFailed";
 }
 
 /** 履歴のソートキー HIST#<日時（UTC）>#<連番>。連番は同じ日時の履歴を並べるためのもので、1から4桁で埋める */
