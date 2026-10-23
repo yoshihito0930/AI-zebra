@@ -1,6 +1,7 @@
 // テストの改ざん防止のチェック（docs/TESTING.md「実装PRでテストを変更させない」）。
 // ファイルを読み書きしない純粋な関数だけを置く。git と設定ファイルの読み込みは test-tamper-cli.ts で行う。
 import { matchesGlob } from "node:path";
+import ts from "typescript";
 
 export type AutonomyConfig = {
   /** 自律度「中」の領域のパス（glob） */
@@ -22,6 +23,47 @@ export function classify(file: string, config: AutonomyConfig): FileKind {
   }
   if (CODE_ROOTS.test(file) && CODE_FILE.test(file)) return "implementation";
   return "other";
+}
+
+/** スタブの関数の中身：引数を使ったことにする `void x;` だけが続き、最後に `throw new Error("未実装")` */
+function isStubBody(body: ts.Block): boolean {
+  const statements = [...body.statements];
+  const last = statements.pop();
+  if (
+    !last ||
+    !ts.isThrowStatement(last) ||
+    !ts.isNewExpression(last.expression) ||
+    !ts.isIdentifier(last.expression.expression) ||
+    last.expression.expression.text !== "Error"
+  ) {
+    return false;
+  }
+  const args = last.expression.arguments ?? [];
+  if (args.length !== 1 || !ts.isStringLiteral(args[0]!) || args[0].text !== "未実装") return false;
+  return statements.every(
+    (s) =>
+      ts.isExpressionStatement(s) &&
+      ts.isVoidExpression(s.expression) &&
+      ts.isIdentifier(s.expression.expression),
+  );
+}
+
+/**
+ * スタブか（docs/TESTING.md の手順2）。型の宣言・import・型だけの export と、中身が「未実装」を投げるだけの
+ * 関数の宣言だけでできている .ts ファイル。振る舞いを持たないので、test-tamper は実装と数えない。
+ * 値の宣言（const、enum、class など）や、ほかの文を含むものはスタブではない
+ */
+export function isStub(file: string, source: string): boolean {
+  if (!/\.[cm]?ts$/.test(file)) return false;
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  return sf.statements.every(
+    (s) =>
+      ts.isImportDeclaration(s) ||
+      ts.isTypeAliasDeclaration(s) ||
+      ts.isInterfaceDeclaration(s) ||
+      (ts.isExportDeclaration(s) && s.isTypeOnly) ||
+      (ts.isFunctionDeclaration(s) && (s.body === undefined || isStubBody(s.body))),
+  );
 }
 
 /** git diff --name-status の出力を読む。T（種類の変更）は変更として扱う */
@@ -46,11 +88,15 @@ export type TamperProblem =
  * - 失敗予定リストに足した項目が、このPRで新しく足したテストではない（既存のテストを隠している）。
  *   ただし、実装を含まないPR（テストを直すPR）では、このPRで変更したテストも足してよい。
  *   すでに実装のある関数の振る舞いを仕様の変更で変えるとき、直したテストは今の実装では失敗するため（docs/TESTING.md の手順5）
+ *
+ * newStubs は、このPRで足したファイルのうちスタブのもの（isStub）。実装と数えない。
+ * スタブを足すテストのPRで、既存のテストも直せるようにするため。足したファイル（A）だけを見る
  */
 export function checkTamper(
   changes: readonly Change[],
   config: AutonomyConfig,
   addedExpectedFailures: readonly string[] = [],
+  newStubs: readonly string[] = [],
 ): TamperProblem[] {
   const problems: TamperProblem[] = [];
   const changedTests = changes
@@ -58,6 +104,7 @@ export function checkTamper(
     .map((c) => c.path);
   const implementations = changes
     .filter((c) => classify(c.path, config) === "implementation")
+    .filter((c) => !(c.status === "A" && newStubs.includes(c.path)))
     .map((c) => c.path);
   if (changedTests.length > 0 && implementations.length > 0) {
     problems.push({ kind: "existing-test-changed", tests: changedTests, implementations });
@@ -78,7 +125,7 @@ export function describeTamperProblem(p: TamperProblem): string[] {
     case "existing-test-changed":
       return [
         "✗ 実装を含むPRで、既存の自律度「中」のテストを変更・削除している（docs/TESTING.md）",
-        "  テストの変更は、実装を含まないPRに分ける",
+        "  テストの変更は、実装を含まないPRに分ける（新しいスタブは実装と数えない）",
         `  テスト：${p.tests.join(", ")}`,
         `  実装：${p.implementations.join(", ")}`,
       ];

@@ -7,6 +7,7 @@ import {
   type AutonomyConfig,
   checkTamper,
   describeTamperProblem,
+  isStub,
   parseNameStatus,
 } from "./test-tamper.ts";
 
@@ -53,7 +54,17 @@ const addedExpectedFailures = parseListFile(readWorking(EXPECTED_FAILURES_FILE) 
   (e) => !before.has(e),
 );
 
-const problems = checkTamper(changes, loadConfig(), addedExpectedFailures);
+// 足したファイルのうち、スタブ（型と「未実装」を投げる関数だけ）のもの。実装と数えない
+const newStubs = changes
+  .filter((c) => c.status === "A")
+  .map((c) => c.path)
+  .filter((file) => {
+    const source = readWorking(file);
+    return source !== undefined && isStub(file, source);
+  });
+if (newStubs.length > 0) console.log(`実装と数えないスタブ：${newStubs.join(", ")}`);
+
+const problems = checkTamper(changes, loadConfig(), addedExpectedFailures, newStubs);
 
 console.log(`比較元 ${base} からの変更：${changes.length} ファイル`);
 if (problems.length > 0) {
