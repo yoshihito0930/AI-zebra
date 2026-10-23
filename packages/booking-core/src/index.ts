@@ -23,7 +23,7 @@ export type {
   CancellationFeeInput,
   CancellationFeeRatePercent,
 } from "./cancellation-fee.ts";
-export { checkAvailability, checkBufferChange, occupiedRange } from "./availability.ts";
+export { checkAvailability, checkBufferChange, holdsSlots, occupiedRange } from "./availability.ts";
 export type {
   AvailabilityInput,
   AvailabilityResult,
@@ -48,6 +48,7 @@ export type {
 } from "./second-hold.ts";
 export {
   applyReservationOperation,
+  isSecondHoldStatus,
   needsProvisionalDeadlineWarning,
 } from "./reservation-transitions.ts";
 export type {

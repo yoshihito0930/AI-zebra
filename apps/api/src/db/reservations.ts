@@ -484,8 +484,9 @@ const RESTORED_BUFFER_MINUTES = 30;
 
 /**
  * 日ごとのアイテムの占有区間（バッファ込み）を、booking-core の入力（区間＋バッファ）に直す。
- * 日ごとのアイテムはバッファの長さを持たないので、
- * - ブロック枠：区間＝占有区間、バッファ0分
+ * 区間の bufferMinutes は使わない（bufferMinutes を書く前の古い区間にはないため。OccupiedInterval 参照）。
+ * 重なりの判定に要るのは占有区間だけなので、
+ * - ブロック枠：区間＝占有区間、バッファ0分（toExistingBlock）
  * - 予約：区間＝[start, end − 30分)、バッファ30分（booking-core が求める占有区間は、もとの占有区間とちょうど同じ）
  * とする。予約のバッファ（ReservationBufferMinutes）に0分がないため。
  * 同じ占有区間が2日のアイテムに入っていても、判定の結果は変わらないので、そのまま渡す
@@ -498,7 +499,7 @@ function toBookingCoreInput(intervals: readonly OccupiedInterval[]): {
   const blocks: ExistingBlock[] = [];
   for (const interval of intervals) {
     if (interval.kind === "block") {
-      blocks.push({ start: interval.start, end: interval.end, bufferMinutes: 0 });
+      blocks.push(toExistingBlock(interval));
       continue;
     }
     if (interval.status === undefined) {
@@ -513,6 +514,15 @@ function toBookingCoreInput(intervals: readonly OccupiedInterval[]): {
     });
   }
   return { reservations, blocks };
+}
+
+/**
+ * 日ごとのアイテムのブロック枠の占有区間（バッファ込み）を、booking-core のブロック枠に直す。
+ * 区間＝占有区間、バッファ0分（booking-core が求める占有区間は、もとの占有区間とちょうど同じ）。
+ * 区間の bufferMinutes は使わない（古い区間にはないため。OccupiedInterval 参照）
+ */
+export function toExistingBlock(interval: OccupiedInterval): ExistingBlock {
+  return { start: interval.start, end: interval.end, bufferMinutes: 0 };
 }
 
 /**
