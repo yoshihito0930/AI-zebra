@@ -42,6 +42,8 @@ import {
   type OccupiedInterval,
   type ReservationMeta,
   type ReservationStore,
+  TRANSACT_WRITE_LIMIT,
+  actorAttribute,
   batchGet,
   dayKey,
   historySortKey,
@@ -241,9 +243,6 @@ export async function saveReservationOperation(
 
 /** 判定のあとに読む日を足し直す回数の上限（足りない日は、ふつうは1回で読み切れる） */
 const MAX_DAY_EXPANSIONS = 4;
-
-/** TransactWriteItems に入れられるアイテムの数の上限 */
-const TRANSACT_WRITE_LIMIT = 100;
 
 /** 予約の META（読んだときの updatedAt の文字列は、書くときの条件に使う） */
 interface ReadMeta {
@@ -651,10 +650,12 @@ async function buildWrite(
         pk: { S: pk },
         sk: { S: historySortKey(at, sequence) },
         at: { S: at },
-        actor: entry.isTarget
-          ? { M: { kind: { S: "admin" }, userId: { S: input.adminUserId } } }
-          : // 昇格に続く終了や、仮予約の変更で付かなくなった第二キープは、システムが行う
-            { M: { kind: { S: "system" } } },
+        actor: actorAttribute(
+          entry.isTarget
+            ? { kind: "admin", userId: input.adminUserId }
+            : // 昇格に続く終了や、仮予約の変更で付かなくなった第二キープは、システムが行う
+              { kind: "system" },
+        ),
         operation: {
           S: !entry.isTarget && entry.after.status === "ended" ? "end" : historyOperation,
         },
@@ -775,7 +776,7 @@ function nextIntervals(
 }
 
 /** 日ごとのアイテムを書き直す。版番号が読んだときと同じ（まだないなら、まだないこと）を条件にし、版番号を1増やす */
-function dayPutItem(
+export function dayPutItem(
   store: ReservationStore,
   dayState: DayState,
   intervals: readonly OccupiedInterval[],
