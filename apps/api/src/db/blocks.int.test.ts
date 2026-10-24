@@ -596,6 +596,30 @@ describe("管理者による予約の直接入力とブロック枠", () => {
     });
   }, 60_000);
 
+  it("管理者が休業のブロック枠 2026/10/20 00:00–2027/01/18 00:00 を 2026/10/20 00:00–2027/01/17 00:00 に縮める：直る（両方にかかる日は1日と数えるので、合わせて90日）", async () => {
+    await inEachZone(async (zone, toZone) => {
+      const id = await saveBlockOk(block("2026-10-20T00:00", "2027-01-18T00:00", 0, toZone));
+
+      // 直す前は 2026/10/20〜2027/01/17 の90日、直したあとは 2026/10/20〜2027/01/16 の89日。
+      // 両方にかかる日を1日と数えると（書き直す日の和集合）、合わせて90日
+      expect(
+        await updateAdminBlock(store, id, block("2026-10-20T00:00", "2027-01-17T00:00", 0, toZone)),
+        zone,
+      ).toEqual({ ok: true });
+
+      expect(await daysHolding(id), zone).toEqual(jstDays("2026-10-20", 89));
+      expect(await storedIntervals("2027-01-16"), zone).toEqual([
+        blockInterval(id, "2026-10-20T00:00", "2027-01-17T00:00", 0),
+      ]);
+      expect(await storedIntervals("2027-01-17"), zone).toEqual([]);
+      await expectBlock(
+        id,
+        { start: "2026-10-20T00:00", end: "2027-01-17T00:00", bufferMinutes: 0 },
+        zone,
+      );
+    });
+  }, 60_000);
+
   it("管理者が、Googleカレンダーから取り込んだブロック枠を消す：不可（取り込みで更新する）", async () => {
     await putCalendarBlock(
       "gcal-kaku-event-1",
@@ -721,6 +745,34 @@ describe("ブロック枠の保存：入れる", () => {
 });
 
 describe("ブロック枠の保存：消す・直す", () => {
+  // 直すときの「合わせて90日」は、直す前と直したあとにかかる日の和集合（両方にかかる日は1日と数える。eaf4951）。
+  // 89日のブロック枠 2026/10/20 00:00–2027/01/17 00:00（かかる日は 2026/10/20〜2027/01/16）をずらす
+  it("89日のブロック枠 2026/10/20 00:00–2027/01/17 00:00 を1日ずらして 2026/10/21 00:00–2027/01/18 00:00 に直す：直る（和集合は 2026/10/20〜2027/01/17 の90日）", async () => {
+    await inEachZone(async (zone, toZone) => {
+      const id = await saveBlockOk(block("2026-10-20T00:00", "2027-01-17T00:00", 0, toZone));
+
+      expect(
+        await updateAdminBlock(store, id, block("2026-10-21T00:00", "2027-01-18T00:00", 0, toZone)),
+        zone,
+      ).toEqual({ ok: true });
+
+      expect(await daysHolding(id), zone).toEqual(jstDays("2026-10-21", 89));
+    });
+  }, 60_000);
+
+  it("89日のブロック枠 2026/10/20 00:00–2027/01/17 00:00 を2日ずらして 2026/10/22 00:00–2027/01/19 00:00 に直す：不可（more-than-90-days。直す前も直したあとも89日だが、和集合は 2026/10/20〜2027/01/18 の91日）。何も書かれない", async () => {
+    const id = await saveBlockOk(block("2026-10-20T00:00", "2027-01-17T00:00", 0));
+    const before = await scanAll();
+
+    for (const [zone, toZone] of zoneVariants) {
+      expect(
+        await updateAdminBlock(store, id, block("2026-10-22T00:00", "2027-01-19T00:00", 0, toZone)),
+        zone,
+      ).toEqual({ ok: false, reason: "more-than-90-days" });
+      await expectNothingWritten(before, zone);
+    }
+  }, 60_000);
+
   it("管理者がブロック枠 10/20 15:00–16:00 のメモだけを「清掃」から「清掃（業者）」に直す：メモが変わり、占有区間はそのまま", async () => {
     const id = await saveBlockOk(
       block("2026-10-20T15:00", "2026-10-20T16:00", 0, undefined, "清掃"),
