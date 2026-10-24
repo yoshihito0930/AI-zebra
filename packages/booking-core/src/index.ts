@@ -75,3 +75,18 @@ export type {
   ReservationChangeFailureReason,
   ReservationChangeResult,
 } from "./reservation-change.ts";
+export { checkDirectEntry } from "./direct-entry.ts";
+export type {
+  DirectEntryInput,
+  DirectEntryKind,
+  DirectEntryRejection,
+  DirectEntryResult,
+  DirectEntryWarning,
+} from "./direct-entry.ts";
+export { blockFromCalendarEvent, checkAdminBlock } from "./blocks.ts";
+export type {
+  AdminBlockInput,
+  AdminBlockRejection,
+  AdminBlockResult,
+  CalendarEvent,
+} from "./blocks.ts";
