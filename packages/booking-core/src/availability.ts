@@ -1,7 +1,7 @@
 // 空き判定（docs/product-specs/booking.md「空き判定」「バッファを30分に縮める」。INV-1）
 // 区間はすべて半開区間 [start, end)。占有区間は [start, end + バッファ)。
 // 第二キープの申込だけ承認済みの仮予約との重なり（2件以上にまたがってもよい）を許す例外（「第二キープ」の節）は、ここでは扱わない（second-hold.ts）。
-// 占有区間・重なり・枠を確保する状態の判定は second-hold.ts と共有する（同じ計算を2か所に持たない）。
+// 占有区間・重なり・枠を確保する状態の判定は second-hold.ts・blocks.ts と共有する（同じ計算を2か所に持たない）。
 // 共有の部品は booking-core の中だけで使い、index.ts からは出さない。
 import type { ReservationStatus } from "@zebra/contracts";
 import type { DateTime } from "luxon";
