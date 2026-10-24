@@ -23,6 +23,7 @@ import {
   applyReservationChange,
   applyReservationOperation,
   approveReservation,
+  checkReservationChangeTime,
   decidePlanId,
   holdsSlots,
   isSecondHoldStatus,
@@ -136,6 +137,9 @@ export interface SavedDraft {
  * - still-held：繰り上げで、付いている仮予約がまだ仮予約のまま重なっている
  * - overlaps-existing：変更後の占有区間が、ほかの予約・ブロック枠と重なる
  * - not-changeable：変更できない予約（承認済みの仮予約・本予約のほか）
+ * - not-on-30-minute-boundary：変更で、変更後の予約区間の開始か終了が30分単位（JST）でない
+ * - shorter-than-2-hours：変更で、変更後の予約区間が2時間未満（深夜帯にかかっても）
+ * - longer-than-24-hours：変更で、変更後の予約区間が24時間を超える
  * - busy：版番号の衝突がやり直しの上限を超えた（混み合っている）
  */
 export type SaveOperationFailure =
@@ -145,6 +149,9 @@ export type SaveOperationFailure =
   | "still-held"
   | "overlaps-existing"
   | "not-changeable"
+  | "not-on-30-minute-boundary"
+  | "shorter-than-2-hours"
+  | "longer-than-24-hours"
   | "busy";
 
 export type SaveOperationResult =
@@ -423,7 +430,8 @@ interface Judged {
 /**
  * booking-core で判定する。理由は booking-core の理由をそのまま返す
  * （承認・却下は not-found・not-pending、昇格・取消・繰り上げは not-found・invalid-status・still-held、
- * 変更は not-found・not-changeable・overlaps-existing。どれも SaveOperationFailure に同じ名前である）
+ * 変更は not-found・not-changeable・overlaps-existing と、日時の決まり（checkReservationChangeTime）の
+ * not-on-30-minute-boundary・shorter-than-2-hours・longer-than-24-hours。どれも SaveOperationFailure に同じ名前である）
  */
 function judge(
   operation: ReservationOperationInput,
@@ -469,6 +477,8 @@ function judge(
       return { ok: true, after: result.reservations, drafts: result.drafts };
     }
     case "change": {
+      const timeRejection = changeTimeRejection(operation, reservations, now);
+      if (timeRejection !== undefined) return { ok: false, reason: timeRejection };
       const result = applyReservationChange({
         reservations,
         blocks: state.blocks,
@@ -494,6 +504,30 @@ function judge(
       };
     }
   }
+}
+
+/**
+ * 変更で日時を変えるときの、不可の決まり（30分単位、最短2時間〈深夜帯にかかっても〉、最長24時間。booking.md「予約の変更」）。
+ * 判定は booking-core（checkReservationChangeTime）に任せる。操作の日時は options.now（管理者が変更を操作した時点）。
+ * 不可なら理由を返し、そうでなければ undefined。
+ * 警告（締め切りと、深夜帯にかかる予約の最短4時間）は、管理者が確認したうえで呼ぶ前提なので、この層では扱わない（管理 API の仕事）。
+ * 対象の予約がない・変更できない状態なら、ここでは判定せず、applyReservationChange の not-found・not-changeable に任せる
+ */
+function changeTimeRejection(
+  operation: Extract<ReservationOperationInput, { kind: "change" }>,
+  reservations: readonly Reservation[],
+  now: DateTime,
+): SaveOperationFailure | undefined {
+  const target = reservations.find((reservation) => reservation.id === operation.reservationId);
+  if (target === undefined) return undefined;
+  if (target.status !== "provisional" && target.status !== "firm") return undefined;
+  const result = checkReservationChangeTime({
+    status: target.status,
+    before: { start: target.start, end: target.end },
+    after: { start: operation.start, end: operation.end },
+    changedAt: now,
+  });
+  return result.ok ? undefined : result.reason;
 }
 
 function toCoreReservation(meta: ReservationMeta): Reservation {
