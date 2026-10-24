@@ -44,6 +44,21 @@ export interface CustomerInfo {
   readonly photographerName: string;
 }
 
+/**
+ * 予約に保存されたお客様の情報（読み出しの形）。フォームの申込は CustomerInfo の欄をすべて持つが、
+ * 管理者の直接入力では、氏名と、電話番号かメールアドレスのどちらか1つだけが必須（booking.md「直接入れる予約のルール」）。
+ * メールアドレスのない予約には、メールの下書きを送れない
+ */
+export type StoredCustomerInfo = {
+  readonly name: string;
+  readonly companyName?: string;
+  readonly address?: string;
+  readonly photographerName?: string;
+} & (
+  | { readonly email: string; readonly phone?: string }
+  | { readonly email?: string; readonly phone: string }
+);
+
 /** 撮影内容の選択肢：still＝スチール撮影、movie＝ムービー撮影、music＝楽器の演奏を伴う撮影 */
 export type ShootingType = "still" | "movie" | "music";
 
@@ -51,6 +66,13 @@ export type ShootingType = "still" | "movie" | "music";
 export interface ShootingInfo {
   readonly types: readonly ShootingType[];
   readonly details: string;
+  readonly notes?: string;
+}
+
+/** 予約に保存された撮影の内容（読み出しの形）。管理者の直接入力では、どの欄も任意（booking.md「直接入れる予約のルール」） */
+export interface StoredShootingInfo {
+  readonly types?: readonly ShootingType[];
+  readonly details?: string;
   readonly notes?: string;
 }
 
@@ -357,8 +379,8 @@ export interface ReservationDetail {
   readonly provisionalIds?: readonly string[];
   readonly createdAt: DateTime;
   readonly updatedAt: DateTime;
-  readonly customer: CustomerInfo;
-  readonly shooting: ShootingInfo;
+  readonly customer: StoredCustomerInfo;
+  readonly shooting: StoredShootingInfo;
   /** 古い順 */
   readonly history: readonly HistoryEntry[];
 }
@@ -999,25 +1021,40 @@ function parseHistory(item: Item, where: string): HistoryEntry {
 
 const SHOOTING_TYPES: ReadonlySet<string> = new Set<ShootingType>(["still", "movie", "music"]);
 
-function parseCustomer(map: Item, where: string): CustomerInfo {
+/** 氏名と、電話番号かメールアドレスのどちらか1つは必須。ほかの欄はなくてよい（管理者の直接入力） */
+function parseCustomer(map: Item, where: string): StoredCustomerInfo {
   const companyName = readOptionalString(map, "companyName", where);
+  const email = readOptionalString(map, "email", where);
+  const phone = readOptionalString(map, "phone", where);
+  const address = readOptionalString(map, "address", where);
+  const photographerName = readOptionalString(map, "photographerName", where);
+  const contact =
+    email !== undefined
+      ? { email, ...(phone === undefined ? {} : { phone }) }
+      : phone !== undefined
+        ? { phone }
+        : undefined;
+  if (contact === undefined) throw malformed(where, "email か phone");
   return {
     name: readString(map, "name", where),
     ...(companyName === undefined ? {} : { companyName }),
-    email: readString(map, "email", where),
-    phone: readString(map, "phone", where),
-    address: readString(map, "address", where),
-    photographerName: readString(map, "photographerName", where),
+    ...contact,
+    ...(address === undefined ? {} : { address }),
+    ...(photographerName === undefined ? {} : { photographerName }),
   };
 }
 
-function parseShooting(map: Item, where: string): ShootingInfo {
-  const types = readStringList(map, "types", where);
-  if (!types.every((type) => SHOOTING_TYPES.has(type))) throw malformed(where, "types");
+/** どの欄もなくてよい（管理者の直接入力） */
+function parseShooting(map: Item, where: string): StoredShootingInfo {
+  const types = readOptionalStringList(map, "types", where);
+  if (types !== undefined && !types.every((type) => SHOOTING_TYPES.has(type))) {
+    throw malformed(where, "types");
+  }
+  const details = readOptionalString(map, "details", where);
   const notes = readOptionalString(map, "notes", where);
   return {
-    types: types as ShootingType[],
-    details: readString(map, "details", where),
+    ...(types === undefined ? {} : { types: types as ShootingType[] }),
+    ...(details === undefined ? {} : { details }),
     ...(notes === undefined ? {} : { notes }),
   };
 }
