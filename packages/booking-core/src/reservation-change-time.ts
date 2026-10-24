@@ -1,7 +1,6 @@
-import type { ReservationStatus } from "@zebra/contracts";
+import type { ApplicationRejection, ReservationStatus } from "@zebra/contracts";
 import type { DateTime } from "luxon";
 import type { TimeRange } from "./availability.ts";
-import type { DirectEntryRejection, DirectEntryWarning } from "./direct-entry.ts";
 
 /**
  * 日時を変えられる予約の状態。変更しても状態は変わらないので、変更前と変更後で同じ（booking.md「予約の変更」）。
@@ -21,15 +20,24 @@ export interface ReservationChangeTimeInput {
 }
 
 /**
- * 警告：管理者が確認すれば変えられる。直接入力と同じ（締め切り：本予約は past-24-hours-before-start、
- * 仮予約は past-provisional-deadline。最短時間：shorter-than-2-hours、late-night-shorter-than-4-hours）
+ * 警告：管理者が確認すれば変えられる。締め切りだけ（本予約は past-24-hours-before-start、
+ * 仮予約は past-provisional-deadline）。名前は申込の理由（公開 API の契約 ApplicationRejection）にそろえる
  */
-export type ReservationChangeTimeWarning = DirectEntryWarning;
+export type ReservationChangeTimeWarning = Extract<
+  ApplicationRejection,
+  "past-24-hours-before-start" | "past-provisional-deadline"
+>;
 
-/** 不可の理由：例外を認めない。名前は直接入力の理由にそろえる */
+/**
+ * 不可の理由：例外を認めない（30分単位、最短時間〈2時間、深夜帯を含むときは4時間〉、最長24時間）。
+ * 名前は申込の理由（ApplicationRejection）にそろえる
+ */
 export type ReservationChangeTimeRejection = Extract<
-  DirectEntryRejection,
-  "not-on-30-minute-boundary" | "longer-than-24-hours"
+  ApplicationRejection,
+  | "not-on-30-minute-boundary"
+  | "shorter-than-2-hours"
+  | "late-night-shorter-than-4-hours"
+  | "longer-than-24-hours"
 >;
 
 /**

@@ -5,3 +5,4 @@
 # 実装のPRで既存のテストをここに足すことはできない（test-tamper が止める）。
 packages/booking-core/src/reservation-change-time.test.ts
 apps/api/src/db/operations.int.test.ts
+packages/booking-core/src/direct-entry.test.ts

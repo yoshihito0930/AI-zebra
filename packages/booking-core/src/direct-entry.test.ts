@@ -84,7 +84,11 @@ function enter(
 // - 入れられる：{ ok: true, warnings, provisionalIds }。「警告。確認すれば入る」は、warnings にその警告があり ok: true であること。
 //   管理者の確認を受けてから保存するのは、呼ぶ側（管理 API・管理画面）
 // - 不可：{ ok: false, reason }
-// 警告が2つ以上当てはまるときの返し方（順番など）は仕様にないので、テストしない（例の行は、どれも当てはまる警告が1つだけ）
+// 警告は締め切りだけ（本予約は開始の24時間前、仮予約と第二キープは仮予約の期限）なので、当てはまる警告は多くても1つ。
+// 最短時間（2時間、深夜帯を含むときは4時間）に満たない予約は不可（booking.md e5fb5cd で警告から不可に変わった）。
+// 不可の理由が2つ以上当てはまるときにどれを返すかは仕様にない（未決事項）ので、テストしない（例の行は、どれも当てはまる理由が1つだけ）。
+// 最短時間の理由（shorter-than-2-hours・late-night-shorter-than-4-hours）は、今の DirectEntryRejection の型にないので、
+// 型ではなく戻り値の値で確かめる（ユーザーの判断。実装担当が型を直す）
 
 // ブロック枠の行（「ブロック枠のバッファ」）は blocks.test.ts にある
 describe("管理者による予約の直接入力とブロック枠", () => {
@@ -103,12 +107,12 @@ describe("管理者による予約の直接入力とブロック枠", () => {
   });
 
   // 利用日は例にないので 10/20 とする
-  it("管理者が 10/20 10:00–11:00 の本予約を入れる：最短時間（2時間）未満なので警告。確認すれば入る", () => {
+  it("管理者が 10/20 10:00–11:00 の本予約を入れる：不可（2時間未満）", () => {
     for (const zone of zones) {
       expect(
         enter(zone, { kind: "firm", start: "2026-10-20T10:00", end: "2026-10-20T11:00" }),
         zone,
-      ).toEqual({ ok: true, warnings: ["shorter-than-2-hours"], provisionalIds: [] });
+      ).toEqual({ ok: false, reason: "shorter-than-2-hours" });
     }
   });
 
@@ -214,7 +218,7 @@ describe("管理者による予約の直接入力とブロック枠", () => {
     }
   });
 
-  it("承認済みの仮予約 P 10/20 15:00–17:00 があるときに、管理者が第二キープ 10/20 15:00–17:00 を入れる（締め切り・最短時間は満たす）：第二キープとして入る。P に付く", () => {
+  it("承認済みの仮予約 P 10/20 15:00–17:00 があるときに、管理者が第二キープ 10/20 15:00–17:00 を入れる（締め切りは満たす）：第二キープとして入る。P に付く", () => {
     for (const zone of zones) {
       const p = reservation(zone, "P", "provisional", "2026-10-20T15:00", "2026-10-20T17:00");
       expect(
@@ -296,7 +300,7 @@ describe("管理者による予約の直接入力とブロック枠", () => {
       return (secondHoldStatuses as readonly ReservationStatus[]).includes(status);
     }
 
-    // 予約区間：開始・終了は30分単位、長さは30分〜24時間（最短時間は警告なので、直接入力では2時間未満もある）。
+    // 予約区間：開始・終了は30分単位、長さは30分〜24時間（最短時間に満たないものも作り、不可になることを確かめる）。
     // バッファは1時間か30分
     const reservationShape = fc
       .record({
@@ -383,12 +387,10 @@ describe("管理者による予約の直接入力とブロック枠", () => {
       });
     }
 
-    // 当てはまる警告を、申込の判定（締め切り：「申込の締め切り」、最短時間：「時間の単位と利用時間」）から求める。
-    // 直接入力の締め切りは申込と同じ（本予約は開始の24時間前、仮予約と第二キープは仮予約の期限）。
-    // 開始・終了は30分単位で24時間以下なので、時間の単位と利用時間の判定で不可になるのは最短時間だけ
+    // 当てはまる警告を、申込の締め切りの判定（「申込の締め切り」の節）から求める。
+    // 直接入力の締め切りは申込と同じ（本予約は開始の24時間前、仮予約と第二キープは仮予約の期限）。警告は多くても1つ
     function expectedWarnings(kind: DirectEntryKind, entry: Shape, before: number) {
       const start = base.plus({ minutes: entry.startMinutes });
-      const end = base.plus({ minutes: entry.endMinutes });
       const appliedAt = start.minus({ minutes: before });
       const warnings: DirectEntryWarning[] = [];
 
@@ -406,19 +408,50 @@ describe("管理者による予約の直接入力とブロック枠", () => {
           throw new Error(`締め切りの理由が想定外：${String(deadline.reason)}`);
         }
       }
-
-      const duration = checkTimeUnitAndDuration(start, end);
-      if (!duration.ok) {
-        if (
-          duration.reason === "shorter-than-2-hours" ||
-          duration.reason === "late-night-shorter-than-4-hours"
-        ) {
-          warnings.push(duration.reason);
-        } else {
-          throw new Error(`時間の単位と利用時間の理由が想定外：${duration.reason}`);
-        }
-      }
       return warnings;
+    }
+
+    // 予約区間が深夜帯（JST の 23:00〜翌8:00）に少しでもかかるか。分の数は JST の 0:00 から数えている
+    function overlapsLateNight(shape: Shape): boolean {
+      const firstDay = Math.floor(shape.startMinutes / (60 * 24)) - 1;
+      const lastDay = Math.floor(shape.endMinutes / (60 * 24)) + 1;
+      for (let day = firstDay; day <= lastDay; day += 1) {
+        // day 日の 23:00 から day + 1 日の 8:00 まで
+        const nightStart = day * 60 * 24 + 23 * 60;
+        const nightEnd = (day + 1) * 60 * 24 + 8 * 60;
+        if (shape.startMinutes < nightEnd && nightStart < shape.endMinutes) return true;
+      }
+      return false;
+    }
+
+    // 当てはまる最短時間の理由（「時間の単位と利用時間」の節。2時間未満、深夜帯にかかり4時間未満）を、分の数で求める。
+    // 両方当てはまるとき（例：03:00–04:00）にどちらを返すかは未決事項なので、どちらも返す
+    function minimumDurationReasons(shape: Shape): string[] {
+      const length = shape.endMinutes - shape.startMinutes;
+      const reasons: string[] = [];
+      if (length < 120) reasons.push("shorter-than-2-hours");
+      if (overlapsLateNight(shape) && length < 240) reasons.push("late-night-shorter-than-4-hours");
+      return reasons;
+    }
+
+    // 30分単位で24時間以下の予約区間の、最短時間の理由。テストの側の計算を、既存の申込の判定
+    // （checkTimeUnitAndDuration。30分単位で24時間以下なので、不可になるのは最短時間だけ）と突き合わせる
+    function gridMinimumDurationReasons(shape: Shape): string[] {
+      const reasons = minimumDurationReasons(shape);
+      const duration = checkTimeUnitAndDuration(
+        base.plus({ minutes: shape.startMinutes }),
+        base.plus({ minutes: shape.endMinutes }),
+      );
+      if (duration.ok) {
+        expect(reasons, "テストの側の計算が申込の判定と合わない").toEqual([]);
+      } else {
+        expect(reasons, "テストの側の計算が申込の判定と合わない").toContain(duration.reason);
+      }
+      return reasons;
+    }
+
+    function rejectedWithOneOf(reasons: readonly string[]) {
+      return reasons.map((reason) => ({ ok: false, reason }));
     }
 
     // 承認済みの仮予約以外の、枠を確保している予約かブロック枠と重なる
@@ -438,8 +471,8 @@ describe("管理者による予約の直接入力とブロック枠", () => {
       );
     }
 
-    // 警告が2つ以上当てはまるときの返し方は仕様にないので、当てはまる警告が1つ以下の入力だけで確かめる
-    it("仮予約・本予約の直接入力は、占有区間が、枠を確保している予約とブロック枠のどれとも重ならなければ入る（当てはまる警告を返す。締め切り・最短時間は警告だけで、入れるのを止めない）。重なれば不可（空き判定）。同じ時点を UTC で渡しても同じ結果", () => {
+    // 不可の理由が2つ以上当てはまるとき（最短時間と空き判定など）にどれを返すかは未決事項なので、当てはまる理由のどれかであればよい
+    it("仮予約・本予約の直接入力は、最短時間（2時間、深夜帯にかかるときは4時間）を満たし、占有区間が、枠を確保している予約とブロック枠のどれとも重ならなければ入る（締め切りを過ぎていれば警告を返す。締め切りは警告だけで、入れるのを止めない）。最短時間に満たなければ不可。重なれば不可（空き判定）。同じ時点を UTC で渡しても同じ結果", () => {
       fc.assert(
         fc.property(
           fc.constantFrom<DirectEntryKind>("provisional", "firm"),
@@ -449,23 +482,32 @@ describe("管理者による予約の直接入力とブロック枠", () => {
           blockShapes,
           anyZone,
           (kind, entry, before, list, blocks, z) => {
-            const warnings = expectedWarnings(kind, entry, before);
-            fc.pre(warnings.length <= 1);
             const overlaps =
               list.some(
                 ({ shape, status }) => isHolding(status) && occupiedOverlaps(entry, shape),
               ) || blocks.some((block) => occupiedOverlaps(entry, block));
-            const expected = overlaps
-              ? { ok: false, reason: "overlaps-existing" }
-              : { ok: true, warnings, provisionalIds: [] };
-            expect(check(kind, entry, before, list, blocks, z)).toEqual(expected);
+            const reasons = [
+              ...gridMinimumDurationReasons(entry),
+              ...(overlaps ? ["overlaps-existing"] : []),
+            ];
+            const result = check(kind, entry, before, list, blocks, z);
+            if (reasons.length > 0) {
+              expect(rejectedWithOneOf(reasons)).toContainEqual(result);
+            } else {
+              expect(result).toEqual({
+                ok: true,
+                warnings: expectedWarnings(kind, entry, before),
+                provisionalIds: [],
+              });
+            }
           },
         ),
       );
     });
 
-    // 重ならない理由と、ほかと重なる理由が両方当てはまるときにどちらを返すかは決めない（second-hold.test.ts と同じ扱い）
-    it("第二キープの直接入力は、承認済みの仮予約の1件以上と重なり、承認済みの仮予約以外の、枠を確保している予約とブロック枠のどれとも重ならなければ入り、重なる承認済みの仮予約すべてに付く（当てはまる警告を返す）。ほかと重なれば不可（空き判定）。どの承認済みの仮予約とも重ならなければ不可（付く仮予約がない）。同じ時点を UTC で渡しても同じ結果", () => {
+    // 重ならない理由と、ほかと重なる理由が両方当てはまるときにどちらを返すかは決めない（second-hold.test.ts と同じ扱い）。
+    // 最短時間の理由とほかの理由が両方当てはまるときも同じ（未決事項）
+    it("第二キープの直接入力は、最短時間（2時間、深夜帯にかかるときは4時間）を満たし、承認済みの仮予約の1件以上と重なり、承認済みの仮予約以外の、枠を確保している予約とブロック枠のどれとも重ならなければ入り、重なる承認済みの仮予約すべてに付く（締め切りを過ぎていれば警告を返す）。最短時間に満たなければ不可。ほかと重なれば不可（空き判定）。どの承認済みの仮予約とも重ならなければ不可（付く仮予約がない）。同じ時点を UTC で渡しても同じ結果", () => {
       fc.assert(
         fc.property(
           reservationShape,
@@ -475,27 +517,25 @@ describe("管理者による予約の直接入力とブロック枠", () => {
           blockShapes,
           anyZone,
           (entry, before, provisionals, others, blocks, z) => {
-            const warnings = expectedWarnings("second-hold", entry, before);
-            fc.pre(warnings.length <= 1);
             const list: Item[] = [
               ...provisionals.map((shape): Item => ({ shape, status: "provisional" })),
               ...others,
             ];
             const provisionalIds = overlappingProvisionalIds(entry, list);
             const result = check("second-hold", entry, before, list, blocks, z);
-            if (overlapsOther(entry, list, blocks)) {
-              if (provisionalIds.length > 0) {
-                expect(result).toEqual({ ok: false, reason: "overlaps-existing" });
-              } else {
-                expect([
-                  { ok: false, reason: "overlaps-existing" },
-                  { ok: false, reason: "no-provisional-to-hold" },
-                ]).toContainEqual(result);
-              }
-            } else if (provisionalIds.length === 0) {
-              expect(result).toEqual({ ok: false, reason: "no-provisional-to-hold" });
+            const reasons = [
+              ...gridMinimumDurationReasons(entry),
+              ...(overlapsOther(entry, list, blocks) ? ["overlaps-existing"] : []),
+              ...(provisionalIds.length === 0 ? ["no-provisional-to-hold"] : []),
+            ];
+            if (reasons.length > 0) {
+              expect(rejectedWithOneOf(reasons)).toContainEqual(result);
             } else {
-              expect(result).toEqual({ ok: true, warnings, provisionalIds });
+              expect(result).toEqual({
+                ok: true,
+                warnings: expectedWarnings("second-hold", entry, before),
+                provisionalIds,
+              });
             }
           },
         ),
@@ -531,7 +571,8 @@ describe("管理者による予約の直接入力とブロック枠", () => {
       );
     });
 
-    // 既存の予約・ブロック枠がないので、不可の理由はこれだけ。JST と UTC の時差は整数の時間なので、
+    // 既存の予約・ブロック枠がないので、不可の理由は、30分単位でないことと、最短時間に満たないことだけ。
+    // 両方当てはまるときにどちらを返すかは未決事項なので、どちらでもよい。JST と UTC の時差は整数の時間なので、
     // 30分単位かどうかは、どちらのゾーンで表しても同じ
     it("開始か終了が30分単位でない予約は、24時間以下でも不可（例外を認めない）。同じ時点を UTC で渡しても同じ結果", () => {
       const offGridShape = fc
@@ -553,10 +594,9 @@ describe("管理者による予約の直接入力とブロック枠", () => {
           minutesBeforeStart,
           anyZone,
           (kind, entry, before, z) => {
-            expect(check(kind, entry, before, [], [], z)).toEqual({
-              ok: false,
-              reason: "not-on-30-minute-boundary",
-            });
+            expect(
+              rejectedWithOneOf(["not-on-30-minute-boundary", ...minimumDurationReasons(entry)]),
+            ).toContainEqual(check(kind, entry, before, [], [], z));
           },
         ),
       );
