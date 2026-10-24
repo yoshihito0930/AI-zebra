@@ -20,24 +20,22 @@ export interface ReservationChangeTimeInput {
 }
 
 /**
- * 警告：管理者が確認すれば変えられる。締め切りだけ（本予約は past-24-hours-before-start、
- * 仮予約は past-provisional-deadline）。名前は申込の理由（公開 API の契約 ApplicationRejection）にそろえる
+ * 警告：管理者が確認すれば変えられる。締め切り（本予約は past-24-hours-before-start、仮予約は past-provisional-deadline）と、
+ * 深夜帯にかかる予約の最短4時間（late-night-shorter-than-4-hours。2時間以上4時間未満）。
+ * 名前は申込の理由（公開 API の契約 ApplicationRejection）にそろえる
  */
 export type ReservationChangeTimeWarning = Extract<
   ApplicationRejection,
-  "past-24-hours-before-start" | "past-provisional-deadline"
+  "past-24-hours-before-start" | "past-provisional-deadline" | "late-night-shorter-than-4-hours"
 >;
 
 /**
- * 不可の理由：例外を認めない（30分単位、最短時間〈2時間、深夜帯を含むときは4時間〉、最長24時間）。
+ * 不可の理由：例外を認めない（30分単位、最短2時間〈深夜帯にかかっても2時間〉、最長24時間）。
  * 名前は申込の理由（ApplicationRejection）にそろえる
  */
 export type ReservationChangeTimeRejection = Extract<
   ApplicationRejection,
-  | "not-on-30-minute-boundary"
-  | "shorter-than-2-hours"
-  | "late-night-shorter-than-4-hours"
-  | "longer-than-24-hours"
+  "not-on-30-minute-boundary" | "shorter-than-2-hours" | "longer-than-24-hours"
 >;
 
 /**

@@ -74,9 +74,9 @@ function changeTime(
 // - 変えられる：{ ok: true, warnings }。「警告。確認すれば変えられる」は、warnings にその警告があり ok: true であること。
 //   管理者の確認を受けてから保存するのは、呼ぶ側（管理 API・管理画面）
 // - 不可：{ ok: false, reason }
-// 警告は締め切りだけ（本予約は開始の24時間前、仮予約は仮予約の期限）なので、当てはまる警告は多くても1つ。
-// 不可の理由が2つ以上当てはまるとき（例：30分単位でなく2時間未満）にどれを返すかは仕様にない（booking.md の未決事項）ので、
-// テストしない（例の行は、どれも当てはまる理由が1つだけ）
+// 警告は、締め切り（本予約は開始の24時間前、仮予約は仮予約の期限）と、深夜帯にかかる予約の最短4時間（2時間以上4時間未満）。
+// 警告が2つ当てはまるときの返し方（順番など）と、不可の理由が2つ以上当てはまるとき（例：30分単位でなく2時間未満）に
+// どれを返すかは仕様にない（booking.md の未決事項）ので、テストしない（例の行は、どれも当てはまる警告・理由が1つだけ）
 
 describe("予約の変更", () => {
   describe("本予約 A が 10/20 10:00–12:00（占有区間 10:00–13:00、金額 11,000円）の場合。", () => {
@@ -92,6 +92,20 @@ describe("予約の変更", () => {
           }),
           label(pair),
         ).toEqual({ ok: false, reason: "shorter-than-2-hours" });
+      }
+    });
+
+    // 操作の日時は書かれていないので、締め切りより前（changedBeforeDeadlines）
+    it("A を 10/20 03:00–05:00 に移動：深夜帯にかかり4時間未満なので警告。確認すれば変えられる", () => {
+      for (const pair of zonePairs) {
+        expect(
+          changeTime(pair, {
+            status: "firm",
+            before: a,
+            after: ["2026-10-20T03:00", "2026-10-20T05:00"],
+          }),
+          label(pair),
+        ).toEqual({ ok: true, warnings: ["late-night-shorter-than-4-hours"] });
       }
     });
 
@@ -184,7 +198,7 @@ describe("予約の変更", () => {
       endMinutes: number;
     }
 
-    // 変更前の予約区間：開始・終了は30分単位、長さは30分〜24時間のうち、決まり（最短時間）を満たすもの
+    // 変更前の予約区間：開始・終了は30分単位、長さは30分〜24時間のうち、不可の決まり（最短2時間）を満たすもの
     // （「日時を変えない変更では、もとの予約がすでに決まりを満たしているので確かめない」。下の validBefore）
     const gridShape = fc
       .record({
@@ -245,8 +259,8 @@ describe("予約の変更", () => {
       return false;
     }
 
-    // 当てはまる不可の理由を、分の数で求める（「時間の単位と利用時間」の節）。JST と UTC の時差は整数の時間なので、
-    // 30分単位かどうかは、どちらのゾーンで表しても同じ。深夜帯は JST で判定する
+    // 当てはまる不可の理由を、分の数で求める（30分単位、最短2時間〈深夜帯にかかっても2時間〉、最長24時間）。
+    // JST と UTC の時差は整数の時間なので、30分単位かどうかは、どちらのゾーンで表しても同じ
     function applicableRejections(shape: Shape): ReservationChangeTimeRejection[] {
       const length = shape.endMinutes - shape.startMinutes;
       const reasons: ReservationChangeTimeRejection[] = [];
@@ -254,54 +268,62 @@ describe("予約の変更", () => {
         reasons.push("not-on-30-minute-boundary");
       }
       if (length < 120) reasons.push("shorter-than-2-hours");
-      if (overlapsLateNight(shape) && length < 240) reasons.push("late-night-shorter-than-4-hours");
       if (length > 60 * 24) reasons.push("longer-than-24-hours");
+      return reasons;
+    }
 
-      // テストの側の計算を、既存の申込の判定（checkTimeUnitAndDuration）と突き合わせる
+    // 深夜帯にかかる予約の最短4時間（警告）が当てはまるか。不可の理由が当てはまらない（30分単位で2時間以上24時間以下の）
+    // 予約区間で使う。テストの側の計算を、既存の申込の判定（checkTimeUnitAndDuration。申込では深夜帯は4時間未満で不可）と
+    // 突き合わせる
+    function lateNightShorterThan4Hours(shape: Shape): boolean {
+      const applies = overlapsLateNight(shape) && shape.endMinutes - shape.startMinutes < 240;
       const duration = checkTimeUnitAndDuration(
         base.plus({ minutes: shape.startMinutes }),
         base.plus({ minutes: shape.endMinutes }),
       );
-      if (duration.ok) {
-        expect(reasons, "テストの側の計算が申込の判定と合わない").toEqual([]);
-      } else {
-        expect(reasons, "テストの側の計算が申込の判定と合わない").toContain(duration.reason);
-      }
-      return reasons;
+      expect(duration, "テストの側の計算が申込の判定と合わない").toEqual(
+        applies ? { ok: false, reason: "late-night-shorter-than-4-hours" } : { ok: true },
+      );
+      return applies;
     }
 
     const validBefore = gridShape.filter((shape) => applicableRejections(shape).length === 0);
 
-    // 当てはまる警告を、申込の締め切りの判定（「申込の締め切り」の節）から求める。
-    // 締め切りは、変更後の開始で数える（本予約は開始の24時間前、仮予約は変更後の利用日の仮予約の期限）。
-    // 本予約・仮予約で締め切りは1つずつなので、警告は多くても1つ
+    // 当てはまる警告を求める。締め切りは、申込の締め切りの判定（「申込の締め切り」の節）で、変更後の開始で数える
+    // （本予約は開始の24時間前、仮予約は変更後の利用日の仮予約の期限）。深夜帯の最短4時間は、変更後の予約区間で数える
     function expectedWarnings(
       status: ReservationChangeTimeStatus,
       after: Shape,
       changedAt: number,
     ): ReservationChangeTimeWarning[] {
+      const warnings: ReservationChangeTimeWarning[] = [];
       const deadline = checkApplicationDeadline({
         kind: status,
         start: base.plus({ minutes: after.startMinutes }),
         appliedAt: base.plus({ minutes: changedAt }),
       });
-      if (deadline.ok) return [];
-      if (
-        deadline.reason === "past-24-hours-before-start" ||
-        deadline.reason === "past-provisional-deadline"
-      ) {
-        return [deadline.reason];
+      if (!deadline.ok) {
+        if (
+          deadline.reason === "past-24-hours-before-start" ||
+          deadline.reason === "past-provisional-deadline"
+        ) {
+          warnings.push(deadline.reason);
+        } else {
+          throw new Error(`締め切りの理由が想定外：${String(deadline.reason)}`);
+        }
       }
-      throw new Error(`締め切りの理由が想定外：${String(deadline.reason)}`);
+      if (lateNightShorterThan4Hours(after)) warnings.push("late-night-shorter-than-4-hours");
+      return warnings;
     }
 
     function sameRange(a: Shape, b: Shape): boolean {
       return a.startMinutes === b.startMinutes && a.endMinutes === b.endMinutes;
     }
 
-    // 不可の理由が2つ以上当てはまるとき（例：30分単位でなく2時間未満、2時間未満で深夜帯にかかり4時間未満）に
-    // どれを返すかは、仕様にない（未決事項）ので決めない。当てはまる理由のどれかであればよい
-    it("日時を変えるときは、変更後の予約区間が30分単位でなければ不可、最短時間（2時間、深夜帯にかかるときは4時間）に満たなければ不可、24時間を超えれば不可（例外を認めない）。そうでなければ変えられ、変更後の開始と操作の日時で締め切りを過ぎていれば警告を返す。変更前の予約区間は結果に関わらない。同じ時点を UTC で渡しても同じ結果", () => {
+    // 不可の理由が2つ以上当てはまるとき（例：30分単位でなく2時間未満）にどれを返すかは、仕様にない（未決事項）ので決めない。
+    // 当てはまる理由のどれかであればよい。警告が2つ当てはまるとき（締め切りと深夜帯の最短4時間）の返し方も仕様にないので、
+    // 当てはまる警告が1つ以下の入力だけで確かめる
+    it("日時を変えるときは、変更後の予約区間が30分単位でなければ不可、2時間未満なら深夜帯にかかっても不可、24時間を超えれば不可（例外を認めない）。そうでなければ変えられ、当てはまる警告（変更後の開始と操作の日時で締め切りを過ぎている、深夜帯にかかり4時間未満）を返す。変更前の予約区間は結果に関わらない。同じ時点を UTC で渡しても同じ結果", () => {
       fc.assert(
         fc.property(
           anyStatus,
@@ -323,10 +345,9 @@ describe("予約の変更", () => {
               expect(rejections.map((reason) => ({ ok: false, reason }))).toContainEqual(result);
               return;
             }
-            expect(result).toEqual({
-              ok: true,
-              warnings: expectedWarnings(status, after, changedAt),
-            });
+            const warnings = expectedWarnings(status, after, changedAt);
+            fc.pre(warnings.length <= 1);
+            expect(result).toEqual({ ok: true, warnings });
           },
         ),
       );
