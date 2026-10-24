@@ -1193,6 +1193,61 @@ describe("変更の保存", () => {
   });
 });
 
+// booking.md「予約の変更」：日時を変えるときは、直接入力と同じ決まりで確かめる。30分単位と最長24時間は必ず守る（不可）。
+// 不可の変更は、保存の層でも理由つきで止まり、何も書かない（INV-2）。
+// 締め切りと最短時間の警告（管理者が確認すれば変えられる）を確かめる流れは管理 API の仕事なので、ここでは扱わない。
+// 判定は JST で行う（INV-7）ので、同じ時点を UTC で表した日時でも確かめる。
+// 理由の値は型（SaveOperationFailure）ではなく、戻り値の値で確かめる。今の SaveOperationFailure にこの2つの値がなく、
+// テスト担当は実装済みのファイルの型を変えられないため（ユーザーの判断。harness-log 2026-10-18 の「型の値として書く」から外れる）。値の名前は、公開 API の契約（ApplicationRejection）と
+// 直接入力（DirectEntryRejection）と同じ。実装担当が SaveOperationFailure に足す
+describe("変更の保存：日時の決まり（不可の変更は何も書かない）", () => {
+  function changeTimeOf(
+    reservationId: string,
+    start: DateTime,
+    end: DateTime,
+  ): ReservationOperationInput {
+    return {
+      kind: "change",
+      reservationId,
+      start,
+      end,
+      content: sameContent,
+      confirmedPrice: Yen.parse(11_000),
+      priceTable,
+    };
+  }
+
+  it("本予約 A 10/20 10:00–12:00 を 10/20 10:15–12:15 に移動：不可（not-on-30-minute-boundary。30分単位でない）。JST で渡しても UTC で渡しても、何も書かれない", async () => {
+    const a = await applyApproved("firm", "2026-10-20T10:00", "2026-10-20T12:00", 11_000);
+    const before = await scanAll();
+
+    for (const toZone of [(d: DateTime) => d, (d: DateTime) => d.toUTC()]) {
+      expect(
+        await operate(
+          changeTimeOf(a, toZone(jst("2026-10-20T10:15")), toZone(jst("2026-10-20T12:15"))),
+          { now: toZone(operatedAt) },
+        ),
+      ).toEqual({ ok: false, reason: "not-on-30-minute-boundary" });
+      await expectNothingWritten(before);
+    }
+  });
+
+  it("本予約 A 10/20 10:00–12:00 を 10/20 10:00–10/21 10:30 に延長：不可（longer-than-24-hours。24時間を超える）。JST で渡しても UTC で渡しても、何も書かれない", async () => {
+    const a = await applyApproved("firm", "2026-10-20T10:00", "2026-10-20T12:00", 11_000);
+    const before = await scanAll();
+
+    for (const toZone of [(d: DateTime) => d, (d: DateTime) => d.toUTC()]) {
+      expect(
+        await operate(
+          changeTimeOf(a, toZone(jst("2026-10-20T10:00")), toZone(jst("2026-10-21T10:30"))),
+          { now: toZone(operatedAt) },
+        ),
+      ).toEqual({ ok: false, reason: "longer-than-24-hours" });
+      await expectNothingWritten(before);
+    }
+  });
+});
+
 describe("日をまたぐ予約と、JST の 0:00 で終わる占有区間", () => {
   // 第二キープ K 10/20 20:00–23:00 の占有区間は 20:00–10/21 00:00（JST の 0:00 で終わる）。
   // K の後ろの本予約 B 10/21 00:00–04:00 は K の占有区間の終わりに接して始まり、DAY#2026-10-21 にしかない

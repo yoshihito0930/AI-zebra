@@ -6,3 +6,4 @@
 packages/booking-core/src/blocks.test.ts
 packages/booking-core/src/direct-entry.test.ts
 packages/booking-core/src/reservation-change-time.test.ts
+apps/api/src/db/operations.int.test.ts
