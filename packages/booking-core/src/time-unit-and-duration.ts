@@ -50,10 +50,18 @@ export function checkTimeUnitAndDuration(start: DateTime, end: DateTime): TimeUn
   if (overlapsLateNight(startJst, endJst) && minutes < LATE_NIGHT_MIN_MINUTES) {
     return { ok: false, reason: "late-night-shorter-than-4-hours" };
   }
-  if (minutes < MIN_MINUTES) {
+  if (isShorterThan2Hours(startJst, endJst)) {
     return { ok: false, reason: "shorter-than-2-hours" };
   }
   return { ok: true };
+}
+
+/**
+ * 予約区間 [start, end) が最短時間（2時間）に満たないか。区間の長さは時点の差で数えるので、ゾーンによらない。
+ * 管理者の操作（直接入力・変更）で、深夜帯にかかる予約でも2時間未満を不可にするために使う（admin-time-rules.ts）
+ */
+export function isShorterThan2Hours(start: DateTime, end: DateTime): boolean {
+  return end.diff(start, "minutes").minutes < MIN_MINUTES;
 }
 
 /**

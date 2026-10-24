@@ -66,9 +66,10 @@ export type BufferChangeResult =
  * 予約区間・ブロック枠の区間として扱えるかを確かめる。
  * 不正な日時や、終了が開始以前の区間は、重なりを正しく判定できない（比べた結果が「重ならない」になり、
  * 枠を確保しているものを見落とすおそれがある。INV-1）ので、RangeError を投げる（黙って予約可にしない）。
- * 30分単位かは確かめない（申込の区間は checkTimeUnitAndDuration の役目。取り込んだブロック枠は30分単位とは限らない）
+ * 30分単位かは確かめない（申込の区間は checkTimeUnitAndDuration の役目。取り込んだブロック枠は30分単位とは限らない）。
+ * 管理者の操作の時間の判定（admin-time-rules.ts）でも、判定の前に使う
  */
-function assertValidRange(range: TimeRange, what: string): void {
+export function assertValidRange(range: TimeRange, what: string): void {
   if (!range.start.isValid || !range.end.isValid) {
     throw new RangeError(`${what}の日時が不正`);
   }

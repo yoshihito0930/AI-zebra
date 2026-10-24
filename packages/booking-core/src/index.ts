@@ -83,6 +83,14 @@ export type {
   DirectEntryResult,
   DirectEntryWarning,
 } from "./direct-entry.ts";
+export { checkReservationChangeTime } from "./reservation-change-time.ts";
+export type {
+  ReservationChangeTimeInput,
+  ReservationChangeTimeRejection,
+  ReservationChangeTimeResult,
+  ReservationChangeTimeStatus,
+  ReservationChangeTimeWarning,
+} from "./reservation-change-time.ts";
 export { blockFromCalendarEvent, checkAdminBlock } from "./blocks.ts";
 export type {
   AdminBlockInput,
