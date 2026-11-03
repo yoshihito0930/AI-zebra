@@ -1,13 +1,25 @@
 // 管理者による予約の直接入力の保存（docs/product-specs/booking.md「管理者による予約の直接入力とブロック枠」の
 // 「直接入れる予約のルール」、reservation-model.md「状態と操作」の直接入力、dynamodb-keys.md「書き込み」）。
-// スタブ：形（名前・引数・戻り値）だけを決める。中身は実装担当が書く（docs/TESTING.md 手順4）
-import type { Yen } from "@zebra/contracts";
+// 判定は booking-core（checkDirectEntry）に任せ、この層は「読む → 判定 → 1トランザクションで書く（版番号が読んだときと同じこと）
+// → 衝突したら読み直す」を行う。日ごとのアイテム・予約の META・PII・履歴の書き方は、申込の保存（reservations.ts）と共有する。
+// 個人情報（お客様の情報・撮影の内容）は PII のアイテムにだけ置く（INV-10）。ログは出さない。
+import { randomUUID } from "node:crypto";
+import { checkDirectEntry, type DirectEntryInput, occupiedRange } from "@zebra/booking-core";
+import type { ReservationStatus, Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
-import type {
-  ReservationApplication,
-  ReservationStore,
-  StoredCustomerInfo,
-  StoredShootingInfo,
+import {
+  INITIAL_BUFFER_MINUTES,
+  type OccupiedInterval,
+  type ReservationApplication,
+  type ReservationStore,
+  type StoredCustomerInfo,
+  type StoredShootingInfo,
+  dayWriteItem,
+  jstDaysOf,
+  newReservationWriteItems,
+  readDayForWrite,
+  toBookingCoreInput,
+  writeWithRetry,
 } from "./reservations.ts";
 
 /** 直接入れる予約の種類。承認待ちを経ず、仮予約（provisional）・本予約（firm）・第二キープ（second-hold）として入る */
@@ -62,13 +74,105 @@ export type SaveDirectEntryResult =
  * 直接入力を保存する。日ごとのアイテム・予約の META（経路は admin、受付番号なし、確定金額あり）・個人情報・
  * 履歴（操作は direct-entry、誰がは管理者）を1トランザクションで書く（INV-2）。不可なら何も書かない
  */
-export function saveDirectEntry(
+export async function saveDirectEntry(
   store: ReservationStore,
   entry: DirectEntry,
   options: SaveDirectEntryOptions,
 ): Promise<SaveDirectEntryResult> {
-  void store;
-  void entry;
-  void options;
-  throw new Error("未実装");
+  if (!options.now.isValid) {
+    throw new RangeError("現在時刻が不正");
+  }
+
+  // 時間の決まり（30分単位・最短2時間・最長24時間）は、日ごとのアイテムを読む前に確かめる（読む日の数を決める前に、長すぎる区間を止める）。
+  // 既存の予約・ブロック枠なしで判定すると、不可になるのは時間の決まりか、第二キープの付く仮予約がない（no-provisional-to-hold）だけ。
+  // 付く仮予約があるかは、読んだあとの判定で決まる
+  const timeOnly = checkDirectEntry(directEntryInput(entry, options.now, [], []));
+  if (!timeOnly.ok && timeOnly.reason !== "no-provisional-to-hold") {
+    return { ok: false, reason: timeOnly.reason };
+  }
+
+  const id = randomUUID();
+  const status = DIRECT_ENTRY_STATUS[entry.kind];
+  // 占有区間 [start, end + バッファ)。バッファは初期値の60分（切り替えは別の操作）
+  const occupied = occupiedRange(entry, INITIAL_BUFFER_MINUTES);
+  const days = jstDaysOf(occupied.start, occupied.end);
+
+  return writeWithRetry<SaveDirectEntryResult>(store, options, async () => {
+    // 1. かかわる JST の日の日ごとのアイテムを、強い整合性で読む
+    const dayStates = await Promise.all(days.map((day) => readDayForWrite(store, day)));
+
+    // 2. booking-core で判定する。警告（締め切り、深夜帯の最短4時間）は、管理者の確認を受けて呼ぶ前提なので止めない
+    const { reservations, blocks } = toBookingCoreInput(
+      dayStates.flatMap((state) => state.intervals),
+    );
+    const judged = checkDirectEntry(directEntryInput(entry, options.now, reservations, blocks));
+    if (!judged.ok) return { kind: "stop", result: { ok: false, reason: judged.reason } };
+
+    // 3. 日ごとのアイテム（版番号の条件つき）・META・PII・履歴を、1回の TransactWriteItems で書く
+    const provisionalIds = entry.kind === "second-hold" ? judged.provisionalIds : undefined;
+    const newInterval: OccupiedInterval = {
+      kind: "reservation",
+      id,
+      status,
+      ...(provisionalIds === undefined ? {} : { provisionalIds }),
+      start: occupied.start,
+      end: occupied.end,
+      bufferMinutes: INITIAL_BUFFER_MINUTES,
+    };
+    return {
+      kind: "write",
+      transactItems: [
+        ...dayStates.map((state) => dayWriteItem(store, state, newInterval)),
+        ...newReservationWriteItems(
+          store,
+          {
+            // 受付番号はフォームの申込だけ（dynamodb-keys.md「アイテム」）なので、渡されても書かない
+            id,
+            status,
+            route: "admin",
+            start: entry.start,
+            end: entry.end,
+            partySize: entry.partySize,
+            cycloramaFloorProtection: entry.cycloramaFloorProtection,
+            planId: entry.planId,
+            equipmentInsurance: entry.equipmentInsurance,
+            optionIds: entry.optionIds,
+            estimate: entry.estimate,
+            confirmedPrice: entry.confirmedPrice,
+            customer: entry.customer,
+            shooting: entry.shooting,
+            ...(provisionalIds === undefined ? {} : { provisionalIds }),
+            actor: { kind: "admin", userId: options.adminUserId },
+            operation: "direct-entry",
+          },
+          options.now,
+        ),
+      ],
+      result: { ok: true, id },
+    };
+  });
+}
+
+/** 直接入れる予約の種類と、入る状態（承認待ちを経ない） */
+const DIRECT_ENTRY_STATUS = {
+  provisional: "provisional",
+  firm: "firm",
+  "second-hold": "second-hold",
+} as const satisfies Record<DirectEntryKind, ReservationStatus>;
+
+function directEntryInput(
+  entry: DirectEntry,
+  enteredAt: DateTime,
+  reservations: DirectEntryInput["reservations"],
+  blocks: DirectEntryInput["blocks"],
+): DirectEntryInput {
+  return {
+    kind: entry.kind,
+    start: entry.start,
+    end: entry.end,
+    bufferMinutes: INITIAL_BUFFER_MINUTES,
+    enteredAt,
+    reservations,
+    blocks,
+  };
 }

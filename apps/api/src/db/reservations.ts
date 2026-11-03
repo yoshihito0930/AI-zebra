@@ -155,7 +155,7 @@ export async function saveApplication(
   const id = randomUUID();
   const status = PENDING_STATUS[application.kind];
   // 占有区間 [start, end + バッファ)。区間が不正（終了が開始以前など）なら booking-core が RangeError を投げる
-  const occupied = occupiedRange(application, APPLICATION_BUFFER_MINUTES);
+  const occupied = occupiedRange(application, INITIAL_BUFFER_MINUTES);
   const days = jstDaysOf(occupied.start, occupied.end);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -175,7 +175,7 @@ export async function saveApplication(
       ...(judged.provisionalIds === undefined ? {} : { provisionalIds: judged.provisionalIds }),
       start: occupied.start,
       end: occupied.end,
-      bufferMinutes: APPLICATION_BUFFER_MINUTES,
+      bufferMinutes: INITIAL_BUFFER_MINUTES,
     };
     const receiptItems =
       application.receiptNumber === undefined
@@ -183,7 +183,19 @@ export async function saveApplication(
         : [receiptWriteItem(store, application.receiptNumber, id)];
     const transactItems: TransactWriteItem[] = [
       ...dayStates.map((state) => dayWriteItem(store, state, newInterval)),
-      ...reservationWriteItems(store, id, status, application, judged.provisionalIds, options.now),
+      ...newReservationWriteItems(
+        store,
+        {
+          ...application,
+          id,
+          status,
+          route: "form",
+          ...(judged.provisionalIds === undefined ? {} : { provisionalIds: judged.provisionalIds }),
+          actor: { kind: "customer" },
+          operation: "apply",
+        },
+        options.now,
+      ),
       ...receiptItems,
     ];
 
@@ -465,8 +477,8 @@ export function parseReservationMeta(id: string, meta: Item): ReservationMeta {
 /** maxAttempts を省略したときの、試す回数の上限 */
 export const DEFAULT_MAX_ATTEMPTS = 5;
 
-/** 申込のバッファ（reservation-model.md「予約が持つもの」。初期値は60分） */
-const APPLICATION_BUFFER_MINUTES = 60;
+/** 申込・直接入力のバッファ（reservation-model.md「予約が持つもの」。初期値は60分） */
+export const INITIAL_BUFFER_MINUTES = 60;
 
 /** 日の区切りに使うタイムゾーン（INV-7。dynamodb-keys.md「アイテム」） */
 export const JST = "Asia/Tokyo";
@@ -490,7 +502,7 @@ function judge(
   const input = {
     start: application.start,
     end: application.end,
-    bufferMinutes: APPLICATION_BUFFER_MINUTES,
+    bufferMinutes: INITIAL_BUFFER_MINUTES,
     reservations,
     blocks,
   } as const;
@@ -513,7 +525,7 @@ const RESTORED_BUFFER_MINUTES = 30;
  * とする。予約のバッファ（ReservationBufferMinutes）に0分がないため。
  * 同じ占有区間が2日のアイテムに入っていても、判定の結果は変わらないので、そのまま渡す
  */
-function toBookingCoreInput(intervals: readonly OccupiedInterval[]): {
+export function toBookingCoreInput(intervals: readonly OccupiedInterval[]): {
   reservations: ExistingReservation[];
   blocks: ExistingBlock[];
 } {
@@ -591,7 +603,7 @@ export function dayKey(day: string): Record<string, AttributeValue> {
  * 日ごとのアイテムへの書き込み。版番号が読んだときと同じ（まだないなら、まだないこと）を条件にし、
  * 版番号を1増やして占有区間を足す。すでにある占有区間は書き換えない
  */
-function dayWriteItem(
+export function dayWriteItem(
   store: ReservationStore,
   state: DayState,
   added: OccupiedInterval,
@@ -628,43 +640,64 @@ function dayWriteItem(
   };
 }
 
-/** 予約の META・PII・履歴（申込の1件）の書き込み */
-function reservationWriteItems(
+/**
+ * 新しく作る予約（申込・直接入力の1件）。予約区間・申込の内容・見積は申込と同じ形。バッファは初期値の60分。
+ * お客様の情報と撮影の内容は、入れた欄だけを書く（直接入力では任意の欄がないことがある）
+ */
+export type NewReservation = Omit<ReservationApplication, "kind" | "customer" | "shooting"> & {
+  readonly id: string;
+  readonly status: ReservationStatus;
+  /** 経路：form＝フォームの申込、admin＝管理者の直接入力 */
+  readonly route: "form" | "admin";
+  /** 確定金額（税込）。承認待ちのあいだはない */
+  readonly confirmedPrice?: Yen;
+  /** 第二キープ（承認待ちを含む）だけが持つ。付く仮予約の id */
+  readonly provisionalIds?: readonly string[];
+  readonly customer: StoredCustomerInfo;
+  readonly shooting: StoredShootingInfo;
+  /** 履歴の「誰が」と操作 */
+  readonly actor: HistoryActor;
+  readonly operation: HistoryOperation;
+};
+
+/** 予約の META・PII・履歴（新しく作る予約の1件）の書き込み */
+export function newReservationWriteItems(
   store: ReservationStore,
-  id: string,
-  status: ReservationStatus,
-  application: ReservationApplication,
-  provisionalIds: readonly string[] | undefined,
+  reservation: NewReservation,
   now: DateTime,
 ): TransactWriteItem[] {
+  const { id, status, provisionalIds, confirmedPrice } = reservation;
   const pk = `RES#${id}`;
-  const start = utcIso(application.start);
+  const start = utcIso(reservation.start);
   const at = utcIso(now);
   const provisionalIdsAttribute: Record<string, AttributeValue> =
     provisionalIds === undefined ? {} : { provisionalIds: stringList(provisionalIds) };
+  const confirmedPriceAttribute: Record<string, AttributeValue> =
+    confirmedPrice === undefined ? {} : { confirmedPrice: { N: String(confirmedPrice) } };
 
   const meta: Record<string, AttributeValue> = {
     pk: { S: pk },
     sk: { S: "META" },
     status: { S: status },
     start: { S: start },
-    end: { S: utcIso(application.end) },
-    bufferMinutes: { N: String(APPLICATION_BUFFER_MINUTES) },
-    route: { S: "form" },
-    ...(application.receiptNumber === undefined
+    end: { S: utcIso(reservation.end) },
+    bufferMinutes: { N: String(INITIAL_BUFFER_MINUTES) },
+    route: { S: reservation.route },
+    ...(reservation.receiptNumber === undefined
       ? {}
-      : { receiptNumber: { S: application.receiptNumber } }),
-    partySize: { N: String(application.partySize) },
-    cycloramaFloorProtection: { BOOL: application.cycloramaFloorProtection },
-    planId: { S: application.planId },
-    equipmentInsurance: { BOOL: application.equipmentInsurance },
-    optionIds: stringList(application.optionIds),
+      : { receiptNumber: { S: reservation.receiptNumber } }),
+    partySize: { N: String(reservation.partySize) },
+    cycloramaFloorProtection: { BOOL: reservation.cycloramaFloorProtection },
+    planId: { S: reservation.planId },
+    equipmentInsurance: { BOOL: reservation.equipmentInsurance },
+    optionIds: stringList(reservation.optionIds),
     estimate: {
       M: {
-        subtotalExcludingTax: { N: String(application.estimate.subtotalExcludingTax) },
-        estimateIncludingTax: { N: String(application.estimate.estimateIncludingTax) },
+        subtotalExcludingTax: { N: String(reservation.estimate.subtotalExcludingTax) },
+        estimateIncludingTax: { N: String(reservation.estimate.estimateIncludingTax) },
       },
     },
+    ...confirmedPriceAttribute,
     ...provisionalIdsAttribute,
     createdAt: { S: at },
     updatedAt: { S: at },
@@ -673,25 +706,27 @@ function reservationWriteItems(
     gsi1sk: { S: start },
   };
 
-  const { customer, shooting } = application;
+  const { customer, shooting } = reservation;
+  const optionalString = (name: string, value: string | undefined): Item =>
+    value === undefined ? {} : { [name]: { S: value } };
   const pii: Record<string, AttributeValue> = {
     pk: { S: pk },
     sk: { S: "PII" },
     customer: {
       M: {
         name: { S: customer.name },
-        ...(customer.companyName === undefined ? {} : { companyName: { S: customer.companyName } }),
-        email: { S: customer.email },
-        phone: { S: customer.phone },
-        address: { S: customer.address },
-        photographerName: { S: customer.photographerName },
+        ...optionalString("companyName", customer.companyName),
+        ...optionalString("email", customer.email),
+        ...optionalString("phone", customer.phone),
+        ...optionalString("address", customer.address),
+        ...optionalString("photographerName", customer.photographerName),
       },
     },
     shooting: {
       M: {
-        types: stringList(shooting.types),
-        details: { S: shooting.details },
-        ...(shooting.notes === undefined ? {} : { notes: { S: shooting.notes } }),
+        ...(shooting.types === undefined ? {} : { types: stringList(shooting.types) }),
+        ...optionalString("details", shooting.details),
+        ...optionalString("notes", shooting.notes),
       },
     },
   };
@@ -700,14 +735,15 @@ function reservationWriteItems(
     pk: { S: pk },
     sk: { S: historySortKey(at, 1) },
     at: { S: at },
-    actor: { M: { kind: { S: "customer" } } },
-    operation: { S: "apply" },
+    actor: actorAttribute(reservation.actor),
+    operation: { S: reservation.operation },
     after: {
       M: {
         status: { S: status },
         start: { S: start },
-        end: { S: utcIso(application.end) },
-        bufferMinutes: { N: String(APPLICATION_BUFFER_MINUTES) },
+        end: { S: utcIso(reservation.end) },
+        bufferMinutes: { N: String(INITIAL_BUFFER_MINUTES) },
+        ...confirmedPriceAttribute,
         ...provisionalIdsAttribute,
       },
     },
@@ -776,6 +812,68 @@ export function isRetryableConflict(error: unknown): boolean {
   );
 }
 
+/** 読む → 判定 → 書く の1回の試みの結果。stop：書かずに result を返す（不可など）。write：transactItems を書けたら result を返す */
+export type WriteStep<R> =
+  | { readonly kind: "stop"; readonly result: R }
+  | {
+      readonly kind: "write";
+      readonly transactItems: readonly TransactWriteItem[];
+      readonly result: R;
+    };
+
+export interface WriteRetryOptions {
+  /** 読む → 判定 → 書く を試す回数の上限（1 以上）。省略すると DEFAULT_MAX_ATTEMPTS */
+  readonly maxAttempts?: number;
+  /** 判定が可になったあと、TransactWriteItems の直前に呼ぶ（attempt は 1 から）。判定が不可なら呼ばない */
+  readonly beforeWrite?: (attempt: number) => Promise<void>;
+}
+
+/** TransactWriteItems に入れられるアイテムの数の上限 */
+export const TRANSACT_WRITE_LIMIT = 100;
+
+/**
+ * dynamodb-keys.md「書き込み」の手順を回す：step で読んで判定し（1・2）、可なら TransactWriteItems で書く（3）。
+ * 条件で失敗したら（読んだあとに同じアイテムに別の書き込みがあった）、step からやり直す（4）。
+ * 試す回数の上限を超えたら「混み合っている」（busy）。step は試すたびに強い整合性で読み直すこと
+ */
+export async function writeWithRetry<R>(
+  store: ReservationStore,
+  options: WriteRetryOptions,
+  step: () => Promise<WriteStep<R>>,
+): Promise<R | { readonly ok: false; readonly reason: "busy" }> {
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new RangeError("maxAttempts は 1 以上の整数");
+  }
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const next = await step();
+    if (next.kind === "stop") return next.result;
+    if (next.transactItems.length > TRANSACT_WRITE_LIMIT) {
+      throw new Error("書き込みが TransactWriteItems の上限を超える");
+    }
+
+    if (options.beforeWrite !== undefined) await options.beforeWrite(attempt);
+
+    try {
+      await store.client.send(
+        new TransactWriteItemsCommand({ TransactItems: [...next.transactItems] }),
+      );
+      return next.result;
+    } catch (error) {
+      if (isRetryableConflict(error)) continue;
+      throw error;
+    }
+  }
+  return { ok: false, reason: "busy" };
+}
+
+/** 履歴の「誰が」の属性（parseActor で読む形） */
+export function actorAttribute(actor: HistoryActor): AttributeValue {
+  return actor.kind === "admin"
+    ? { M: { kind: { S: "admin" }, userId: { S: actor.userId } } }
+    : { M: { kind: { S: actor.kind } } };
+}
+
 // ---- 属性の形の変換（DynamoDB の AttributeValue と、普通の値） ----
 
 /** UTC の ISO 8601（INV-7）。どのゾーンで表した DateTime でも、同じ時点の UTC にする */
@@ -820,12 +918,16 @@ export function readString(item: Item, attribute: string, where: string): string
   return value;
 }
 
-function readOptionalString(item: Item, attribute: string, where: string): string | undefined {
+export function readOptionalString(
+  item: Item,
+  attribute: string,
+  where: string,
+): string | undefined {
   if (item[attribute] === undefined) return undefined;
   return readString(item, attribute, where);
 }
 
-function readNumber(item: Item, attribute: string, where: string): number {
+export function readNumber(item: Item, attribute: string, where: string): number {
   const raw = item[attribute]?.N;
   const value = raw === undefined ? Number.NaN : Number(raw);
   if (!Number.isFinite(value)) throw malformed(where, attribute);
@@ -862,7 +964,7 @@ function readOptionalStringList(
   return readStringList(item, attribute, where);
 }
 
-function readInstant(item: Item, attribute: string, where: string): DateTime {
+export function readInstant(item: Item, attribute: string, where: string): DateTime {
   const value = DateTime.fromISO(readString(item, attribute, where), { zone: "utc" });
   if (!value.isValid) throw malformed(where, attribute);
   return value;
