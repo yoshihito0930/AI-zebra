@@ -91,6 +91,8 @@ const HistoryEntry = z.strictObject({
   actor: z.discriminatedUnion("kind", [
     z.strictObject({ kind: z.literal("customer") }),
     z.strictObject({ kind: z.literal("admin"), userId: z.string().min(1) }),
+    /** 昇格に続く第二キープの終了など、システムが行った操作（reservation-model.md「状態と操作」） */
+    z.strictObject({ kind: z.literal("system") }),
   ]),
   operation: z.enum([
     "apply",
