@@ -1,7 +1,10 @@
-// 予約API の本体。ローカルでは server.ts（Node サーバー）、本番では lambda.ts（Lambda）から同じ app を動かす
+// 予約API の本体。ローカルでは server.ts（Node サーバー）、本番では lambda.ts（Lambda）から同じ createApp で動かす。
+// 違うのは管理者の id の取り出し方だけで、入口が渡す（docs/design-docs/admin-api.md「認証」）
 import { currentPriceTable } from "@zebra/booking-core";
 import { Hono } from "hono";
 import { DateTime } from "luxon";
+import type { AdminUserIdSource } from "./admin/admin-user.ts";
+import { createAdminRoute } from "./admin/routes.ts";
 import { createDynamoClient } from "./db/client.ts";
 import type { ReservationStore } from "./db/reservations.ts";
 import { createPublicApplicationRoute } from "./public/applications.ts";
@@ -14,8 +17,11 @@ import { createPublicCalendarRoute } from "./public/calendar.ts";
  */
 const now = (): DateTime => DateTime.now();
 
-/** API の本体を組み立てる。読み書きするテーブルは引数で受け取る（テストからは DynamoDB Local のテーブルを渡せる） */
-export function createApp(store: ReservationStore): Hono {
+/**
+ * API の本体を組み立てる。読み書きするテーブルは引数で受け取る（テストからは DynamoDB Local のテーブルを渡せる）。
+ * adminUserId は管理 API の管理者の id の取り出し方（本番は adminUserIdFromLambdaContext、手元は devAdminUserId）
+ */
+export function createApp(store: ReservationStore, adminUserId: AdminUserIdSource): Hono {
   const app = new Hono();
 
   // 動作確認用。予約の内容や個人情報は返さない（INV-3）
@@ -29,6 +35,9 @@ export function createApp(store: ReservationStore): Hono {
     "/public",
     createPublicApplicationRoute({ store, now, priceTable: currentPriceTable() }),
   );
+
+  // 管理 API（管理画面のスタッフだけ）：/admin/…（admin-api.md。管理者の id が取れなければ 401）
+  app.route("/", createAdminRoute({ store, now, priceTable: currentPriceTable(), adminUserId }));
 
   return app;
 }
@@ -58,4 +67,8 @@ export function storeFromEnvironment(env: NodeJS.ProcessEnv): ReservationStore {
   };
 }
 
-export const app = createApp(storeFromEnvironment(process.env));
+/**
+ * 管理者の id を取らない app（管理 API はどれも 401）。入口（server.ts・lambda.ts）は使わず、
+ * それぞれの管理者の id の取り出し方で createApp を呼ぶ。管理者がいなくても動く所（/health、公開API）の確認用
+ */
+export const app = createApp(storeFromEnvironment(process.env), () => undefined);

@@ -272,8 +272,21 @@ const BATCH_GET_LIMIT = 100;
 /** BatchGetItem の読み残し（UnprocessedKeys）を読み直す回数の上限 */
 const BATCH_GET_MAX_RETRIES = 8;
 
-/** 強い整合性の BatchGetItem（1回に BATCH_GET_LIMIT 件まで）。読み残しは読み直す */
-export async function batchGet(store: ReservationStore, keys: Item[]): Promise<Item[]> {
+/** BatchGetItem で読む属性を限るときの指定（ProjectionExpression と、その中の属性名の置き換え） */
+export interface BatchGetProjection {
+  readonly expression: string;
+  readonly names?: Record<string, string>;
+}
+
+/**
+ * 強い整合性の BatchGetItem（1回に BATCH_GET_LIMIT 件まで）。読み残しは読み直す。
+ * projection を渡すと、その属性だけを読む（個人情報のアイテムから氏名だけを読むときなど）
+ */
+export async function batchGet(
+  store: ReservationStore,
+  keys: Item[],
+  projection?: BatchGetProjection,
+): Promise<Item[]> {
   const items: Item[] = [];
   let pending: Item[] = keys;
   for (let retry = 0; pending.length > 0; retry++) {
@@ -283,7 +296,20 @@ export async function batchGet(store: ReservationStore, keys: Item[]): Promise<I
     if (retry > 0) await sleep(BATCH_GET_BACKOFF_MS * 2 ** (retry - 1));
     const res = await store.client.send(
       new BatchGetItemCommand({
-        RequestItems: { [store.tableName]: { Keys: pending, ConsistentRead: true } },
+        RequestItems: {
+          [store.tableName]: {
+            Keys: pending,
+            ConsistentRead: true,
+            ...(projection === undefined
+              ? {}
+              : {
+                  ProjectionExpression: projection.expression,
+                  ...(projection.names === undefined
+                    ? {}
+                    : { ExpressionAttributeNames: projection.names }),
+                }),
+          },
+        },
       }),
     );
     items.push(...(res.Responses?.[store.tableName] ?? []));
@@ -379,6 +405,8 @@ export interface ReservationDetail {
   readonly bufferMinutes: 30 | 60;
   /** 経路：form＝フォームの申込、admin＝管理者の直接入力 */
   readonly route: "form" | "admin";
+  /** 受付番号。フォームの申込（公開 API の申込）だけが持つ */
+  readonly receiptNumber?: string;
   readonly partySize: number;
   readonly cycloramaFloorProtection: boolean;
   readonly planId: string;
@@ -449,6 +477,7 @@ export function parseReservationMeta(id: string, meta: Item): ReservationMeta {
   const confirmedPrice =
     meta["confirmedPrice"] === undefined ? undefined : readYen(meta, "confirmedPrice", where);
   const provisionalIds = readOptionalStringList(meta, "provisionalIds", where);
+  const receiptNumber = readOptionalString(meta, "receiptNumber", where);
   return {
     id,
     status: readStatus(meta, "status", where),
@@ -456,6 +485,7 @@ export function parseReservationMeta(id: string, meta: Item): ReservationMeta {
     end: readInstant(meta, "end", where),
     bufferMinutes: readBufferMinutes(meta, "bufferMinutes", where),
     route,
+    ...(receiptNumber === undefined ? {} : { receiptNumber }),
     partySize: readNumber(meta, "partySize", where),
     cycloramaFloorProtection: readBoolean(meta, "cycloramaFloorProtection", where),
     planId: readString(meta, "planId", where),
@@ -776,6 +806,27 @@ function receiptWriteItem(
       ConditionExpression: "attribute_not_exists(pk)",
     },
   };
+}
+
+/**
+ * 受付番号から予約の id を探す（RCPT#<受付番号> / META を読む。dynamodb-keys.md「読み出し」）。
+ * 受付番号の形は、呼ぶ側（API の層）で確かめてから渡す。ない受付番号なら null。
+ * 受付番号のアイテムは予約を取消・却下しても残るので、取消した予約も探せる
+ */
+export async function findReservationIdByReceiptNumber(
+  store: ReservationStore,
+  receiptNumber: string,
+): Promise<string | null> {
+  const pk = `RCPT#${receiptNumber}`;
+  const res = await store.client.send(
+    new GetItemCommand({
+      TableName: store.tableName,
+      Key: { pk: { S: pk }, sk: { S: "META" } },
+      ConsistentRead: true,
+    }),
+  );
+  if (res.Item === undefined) return null;
+  return readString(res.Item, "reservationId", `${pk} META`);
 }
 
 /** トランザクションが、index 番目のアイテムの条件の失敗（ConditionalCheckFailed）で取り消されたか */

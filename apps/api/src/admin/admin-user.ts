@@ -4,6 +4,7 @@
 //   server.ts が読んだ値を devAdminUserId に渡す（lambda.ts は読まない）
 // 管理 API のルート（routes.ts の createAdminRoute）に、どちらかを渡す。取れないときは undefined を返し、ルートは 401 にする
 import type { Context } from "hono";
+import { z } from "zod";
 
 /** リクエストから管理者の id を取り出す。取れないとき（空の文字列を含む）は undefined */
 export type AdminUserIdSource = (c: Context) => string | undefined;
@@ -14,12 +15,25 @@ export type AdminUserIdSource = (c: Context) => string | undefined;
  * 環境変数（DEV_ADMIN_USER_ID を含む）は読まない
  */
 export function adminUserIdFromLambdaContext(c: Context): string | undefined {
-  void c;
-  throw new Error("未実装");
+  // リクエストの文脈は外から来る値なので、使う前にパースする（INV-4）。ほかの欄やクレームは見ない
+  const parsed = LambdaAuthorizerContext.safeParse(c.env);
+  return parsed.success ? parsed.data.requestContext.authorizer.jwt.claims.sub : undefined;
 }
 
 /** 手元（Node サーバー）：server.ts が環境変数 DEV_ADMIN_USER_ID から読んだ値の管理者として動く。値がない・空なら、どのリクエストも id なし */
 export function devAdminUserId(userId: string | undefined): AdminUserIdSource {
-  void userId;
-  throw new Error("未実装");
+  const id = userId === undefined || userId === "" ? undefined : userId;
+  return () => id;
 }
+
+/**
+ * hono/aws-lambda の handle が c.env に渡すリクエストの文脈のうち、JWT オーソライザーが確かめたクレームの sub。
+ * sub は空でない文字列だけを通す。ほかの欄は問わない（文脈には多くの欄があり、使わないため）
+ */
+const LambdaAuthorizerContext = z.object({
+  requestContext: z.object({
+    authorizer: z.object({
+      jwt: z.object({ claims: z.object({ sub: z.string().min(1) }) }),
+    }),
+  }),
+});
