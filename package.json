@@ -15,6 +15,7 @@
     "test:int": "vitest run --config vitest.int.config.ts",
     "db:up": "docker compose up -d --wait dynamodb",
     "db:down": "docker compose down",
+    "db:table": "node apps/api/scripts/local-table.ts",
     "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm deps && pnpm test && pnpm spec-coverage",
     "deps": "depcruise . --config .dependency-cruiser.cjs",
     "spec-coverage": "node scripts/harness/src/spec-coverage-cli.ts",

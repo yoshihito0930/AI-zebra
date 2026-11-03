@@ -17,6 +17,7 @@
 | `pnpm check` | lint・整形・型・依存の方向・単体テスト・例の網羅（CI とほぼ同じ） |
 | `pnpm test` | 単体テスト |
 | `pnpm db:up` / `pnpm db:down` | ローカルの DynamoDB（Docker）の起動・停止 |
+| `pnpm db:table` | ローカルの DynamoDB に、手元で API を動かすためのテーブルを作る（先に `pnpm db:up`） |
 | `pnpm test:int` | 統合テスト（先に `pnpm db:up`） |
 | `pnpm build` | すべてのアプリをビルド |
 | `pnpm dev:site` | HP（http://localhost:4321/） |
@@ -38,7 +39,13 @@
 
 `DEV_ADMIN_USER_ID` を読むのは手元の Node サーバー（`apps/api/src/server.ts`）だけ。本番（Lambda）は読まず、API Gateway の JWT オーソライザーが確かめたトークンの `sub` を使う（[docs/design-docs/admin-api.md](docs/design-docs/admin-api.md)「認証」）。
 
-例：`DEV_ADMIN_USER_ID=dev-admin DYNAMODB_TABLE_NAME=<テーブルの名前> DYNAMODB_ENDPOINT=http://localhost:8000 pnpm dev:api`
+`pnpm db:up` で起動したローカルの DynamoDB は空なので、最初に `pnpm db:table` でテーブル（キー設計どおり。名前は既定で `zebra-local`）を作る。何度動かしてもよい（もうあれば作らない）。接続先が手元（localhost・127.0.0.1）でなければ作らない。ローカルの DynamoDB はデータをメモリにだけ置くので、`pnpm db:down` のあとはもう一度作る。
+
+```sh
+pnpm db:up
+pnpm db:table
+DEV_ADMIN_USER_ID=dev-admin DYNAMODB_TABLE_NAME=zebra-local DYNAMODB_ENDPOINT=http://localhost:8000 pnpm dev:api
+```
 
 ## 変更の流れ
 
