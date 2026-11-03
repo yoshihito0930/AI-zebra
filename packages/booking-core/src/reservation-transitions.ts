@@ -99,12 +99,13 @@ type ReservationOperationSuccess = Extract<ReservationOperationResult, { ok: tru
  * 操作できる状態（reservation-model.md「状態と操作」）
  * - promote：仮予約だけ。ほかの状態は invalid-status
  * - cancel：仮予約・本予約・第二キープだけ。承認待ちは「却下」（この関数の操作にない）で取消にするので invalid-status。
- *   取消・終了も invalid-status
+ *   取消・終了も invalid-status。本予約を開始以降（cancelledAt が予約区間の開始の時刻と同じか後。利用中・利用後）に
+ *   取消すのも invalid-status（booking.md の未決事項「利用日を過ぎてから（利用中・利用後）の取消の扱い」。決まるまでは取消できない）。
+ *   仮予約・第二キープは、開始以降も取消できる
  * - move-up：第二キープだけ。承認待ちの第二キープは、管理者が承認してから繰り上げる（booking.md「第二キープ」）ので invalid-status
  *
  * 状態が取消・終了になった第二キープは、付いている仮予約の id を空にする（Reservation の provisionalIds の説明）。
- * 取消す予約に確定金額がない（承認済みなのに null）か、キャンセル料を計算できない
- * （本予約を開始以降に取消す。booking.md の未決事項）ときは、calculateCancellationFee と同じく RangeError を投げる
+ * 取消す予約に確定金額がない（承認済みなのに null）か、取消の日時・開始日時が不正なときは RangeError を投げる
  */
 export function applyReservationOperation(input: {
   readonly reservations: readonly Reservation[];
@@ -163,6 +164,7 @@ function promote(
 
 /**
  * 取消：仮予約・本予約・第二キープ → 取消。キャンセル料は calculateCancellationFee（確定金額で計算する）。
+ * 開始以降の本予約は取消できない（invalid-status。booking.md の未決事項）。
  * 仮予約の取消なら、付いている承認済みの第二キープに案内の下書き（承認待ちの第二キープは、状態も下書きも変えない）。
  * 第二キープの取消なら、条件を満たせば前倒しの案内の下書き
  */
@@ -178,6 +180,15 @@ function cancel(
   if (target.confirmedAmount === null) {
     // 承認済みの予約は確定金額を持つ（reservation-model.md「金額」）。ないなら、キャンセル料を決められない
     throw new RangeError("取消す予約に確定金額がない");
+  }
+  if (!target.start.isValid || !cancelledAt.isValid) {
+    throw new RangeError("開始日時か取消の日時が不正");
+  }
+  // 未決事項のため仮：開始以降（開始の時刻ちょうどを含む。利用中・利用後）の本予約は取消できない。
+  // キャンセル料の率が決まっていないため（booking.md の未決事項「利用日を過ぎてから（利用中・利用後）の取消の扱い」）。
+  // 時点で比べるので、DateTime のゾーンによらない（INV-7）
+  if (status === "firm" && cancelledAt.toMillis() >= target.start.toMillis()) {
+    return { ok: false, reason: "invalid-status" };
   }
   const cancellationFee = calculateCancellationFee({
     status,
