@@ -245,6 +245,26 @@ describe("管理 API の契約：詳細（AdminReservationDetail）", () => {
     expect(AdminReservationDetail.safeParse(value).success).toBe(true);
   });
 
+  it("終了した第二キープ（履歴の最後は、誰がシステムの終了）：通す", () => {
+    const value = {
+      ...without(detail, "currentEstimate"),
+      status: "ended",
+      confirmedPrice: 11_000,
+      provisionalIds: ["res-kaku-9"],
+      history: [
+        historyEntry,
+        {
+          at: "2026-10-05T09:00:00+09:00",
+          actor: { kind: "system" },
+          operation: "end",
+          before: { ...historyEntry.after, status: "second-hold" },
+          after: { ...historyEntry.after, status: "ended" },
+        },
+      ],
+    };
+    expect(AdminReservationDetail.safeParse(value).success).toBe(true);
+  });
+
   it("取消した予約（状態は取消）：通す", () => {
     const value = { ...without(detail, "currentEstimate"), status: "cancelled" };
     expect(AdminReservationDetail.safeParse(value).success).toBe(true);
@@ -283,6 +303,14 @@ describe("管理 API の契約：詳細（AdminReservationDetail）", () => {
     [
       "履歴の誰がが不正（管理者の id がない）",
       { ...detail, history: [{ ...historyEntry, actor: { kind: "admin" } }] },
+    ],
+    [
+      "履歴の誰がが不正（システムに管理者の id を付ける）",
+      { ...detail, history: [{ ...historyEntry, actor: { kind: "system", userId: "x" } }] },
+    ],
+    [
+      "履歴の誰がの種類が不正",
+      { ...detail, history: [{ ...historyEntry, actor: { kind: "robot" } }] },
     ],
     ["履歴の操作が不正", { ...detail, history: [{ ...historyEntry, operation: "delete" }] }],
     [

@@ -37,7 +37,7 @@ import {
 // 管理者のブロック枠は saveAdminBlock で入れる。Googleカレンダーから取り込んだブロック枠は、取り込みの保存がまだないので、
 // 資料の形（BLK#gcal-<イベントの id> の META の属性 start・end・bufferMinutes・route、日ごとのアイテムの占有区間）で直接入れる。
 // 期間の長さ（最長62日）と前後は API の層で確かめる（admin-api.md）ので、ここでは扱わない。
-// 予約の占有区間のうちバッファだけが次の日にかかる場合に、次の日の期間に出すかは資料にないので扱わない。
+// 「期間の日にかかる」は占有区間（バッファを含む）で見る。バッファだけが次の日にかかる予約も、次の日の期間に出る（admin-api.md）。
 
 const client = createLocalDynamoClient();
 let store: ReservationStore;
@@ -629,6 +629,30 @@ describe("管理画面の予約の一覧の読み出し：期間（日ごとの�
     ).toEqual({ reservations: [r], blocks: [] });
     expect(
       ids(await listAdminReservationsInPeriod(store, { from: "2026-10-23", to: "2026-10-23" })),
+    ).toEqual({ reservations: [], blocks: [blk] });
+  });
+
+  it("「期間の日にかかる」は占有区間で見る：10/20 19:30–23:30（占有区間は 10/21 00:30 まで）の本予約は、バッファだけがかかる 10/21 の期間にも出る。10/22 の期間には出ない", async () => {
+    const r = await applyApproved("firm", "2026-10-20T19:30", "2026-10-20T23:30");
+
+    const on21 = await listAdminReservationsInPeriod(store, {
+      from: "2026-10-21",
+      to: "2026-10-21",
+    });
+    expect(ids(on21)).toEqual({ reservations: [r], blocks: [] });
+    // 返すのは予約区間（バッファを含まない）
+    expect(local(on21.reservations[0]?.start ?? DateTime.invalid("なし"))).toBe("2026-10-20T19:30");
+    expect(local(on21.reservations[0]?.end ?? DateTime.invalid("なし"))).toBe("2026-10-20T23:30");
+    expect(
+      ids(await listAdminReservationsInPeriod(store, { from: "2026-10-22", to: "2026-10-22" })),
+    ).toEqual({ reservations: [], blocks: [] });
+  });
+
+  it("バッファだけが次の日にかかるブロック枠（10/20 23:00–23:30、バッファ1時間。占有区間は 10/21 00:30 まで）も、10/21 の期間に出る", async () => {
+    const blk = await addAdminBlock("2026-10-20T23:00", "2026-10-20T23:30", 60);
+
+    expect(
+      ids(await listAdminReservationsInPeriod(store, { from: "2026-10-21", to: "2026-10-21" })),
     ).toEqual({ reservations: [], blocks: [blk] });
   });
 

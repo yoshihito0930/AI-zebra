@@ -47,9 +47,9 @@ import { type AdminDeps, createAdminRoute } from "./routes.ts";
 // ここでは代表的な場合と、それが API の返事（ステータス・本文）と DB に正しく現れることを確かめる。
 // - 管理者の id の取り出し方は、ルートを作る関数（createAdminRoute）に渡す（本番は adminUserIdFromLambdaContext、
 //   手元は devAdminUserId）。Lambda・Node の入口（lambda.ts・server.ts）の確認は entrypoints.test.ts
-// - 操作が成功したときのステータスは資料にないので、2xx であることだけを確かめる
+// - 成功（一覧・詳細・受付番号・操作）は 200（admin-api.md「操作（1回目）」）
 // - 却下・昇格・取消・繰り上げの本文は、契約（AdminEmptyRequest）どおり {} を送る。本文を付けない要求をどう扱うかは資料にないので扱わない
-// - 終了した第二キープの詳細は扱わない（履歴の「誰が」がシステムになるが、契約の履歴の actor にシステムがない。PR に書いて質問する）
+// - 終了した第二キープの詳細は、履歴の「誰が」がシステム（契約の history[].actor の { kind: "system" }）
 // - 2回目・3回目の操作（変更・直接入力・バッファの切り替え・ブロック枠・下書きの送信）は扱わない
 
 const client = createLocalDynamoClient();
@@ -348,11 +348,10 @@ async function post(
   });
 }
 
-/** 成功（2xx）の JSON を返す */
+/** 成功（200）の JSON を返す */
 async function okJson(res: Response): Promise<unknown> {
   const text = await res.text();
-  expect(res.status, text).toBeGreaterThanOrEqual(200);
-  expect(res.status, text).toBeLessThan(300);
+  expect(res.status, text).toBe(200);
   expect(res.headers.get("content-type") ?? "").toContain("application/json");
   return JSON.parse(text) as unknown;
 }
@@ -703,6 +702,20 @@ describe("管理 API：予約の一覧（GET /admin/reservations）", () => {
     expect((await listJson("status=firm")).reservations).toEqual([]);
   });
 
+  it("「期間の日にかかる」は占有区間で見る：10/20 19:30–23:30（占有区間は 10/21 00:30 まで）の本予約は、10/21 だけの一覧にも出る（予約区間は 10/20 のまま返す）", async () => {
+    const r = await applyApproved("firm", "2026-10-20T19:30", "2026-10-20T23:30");
+
+    const on21 = await listJson("from=2026-10-21&to=2026-10-21");
+
+    expect(
+      on21.reservations.map((x) => [x.id, local(x.start), local(x.end), x.bufferMinutes]),
+    ).toEqual([[r, "2026-10-20T19:30", "2026-10-20T23:30", 60]]);
+    expect((await listJson("from=2026-10-20&to=2026-10-21")).reservations.map((x) => x.id)).toEqual(
+      [r],
+    );
+    expect((await listJson("from=2026-10-22&to=2026-10-22")).reservations).toEqual([]);
+  });
+
   it.each([
     ["期間がちょうど62日（10/01〜12/01）", "from=2026-10-01&to=2026-12-01"],
     ["from と to が同じ日", "from=2026-10-20&to=2026-10-20"],
@@ -925,6 +938,45 @@ describe("管理 API：予約の詳細（GET /admin/reservations/{id}）", () =>
     expect(detail.history[0]?.actor).toEqual({ kind: "admin", userId: preparingAdminUserId });
   });
 
+  it("仮予約 P の昇格に続いて終了した第二キープ K：200。AdminReservationDetail を通り、状態は終了、履歴の最後は「誰が」がシステムの終了（日時は昇格の時刻）。見積の計算し直しとキャンセル料はない", async () => {
+    const p = await applyApproved("provisional", "2026-10-20T13:00", "2026-10-20T15:00");
+    const k = await applyApproved("second-hold", "2026-10-20T14:00", "2026-10-20T17:00");
+    await acceptedDrafts(await post(`/admin/reservations/${p}/promote`));
+
+    const detail = await detailJson(k);
+
+    expect(detail.id).toBe(k);
+    expect(detail.status).toBe("ended");
+    expect(detail.history.map((h) => h.operation)).toEqual(["apply", "approve", "end"]);
+    const entry = detail.history.at(-1);
+    expect(entry?.actor).toEqual({ kind: "system" });
+    expect(local(entry?.at)).toBe("2026-10-05T09:00");
+    expect(entry?.before?.status).toBe("second-hold");
+    expect(entry?.after?.status).toBe("ended");
+    expect(detail.currentEstimate).toBeUndefined();
+    expect(detail.cancellationFeeIfCancelledNow).toBeUndefined();
+    // 昇格した P の履歴の最後は、API を呼んだ管理者の昇格
+    expect((await detailJson(p)).history.at(-1)?.actor).toEqual({
+      kind: "admin",
+      userId: adminUserId,
+    });
+  });
+
+  it("承認待ちのまま終了した第二キープ（承認待ち（第二キープ）K2 が付く仮予約 P が昇格）：200。AdminReservationDetail を通り、状態は終了、履歴の最後は「誰が」がシステムの終了", async () => {
+    const p = await applyApproved("provisional", "2026-10-20T13:00", "2026-10-20T15:00");
+    const k2 = await apply("second-hold", "2026-10-20T11:00", "2026-10-20T13:00");
+    await prepareOperation({ kind: "promote", reservationId: p }, operatedAt);
+
+    const detail = await detailJson(k2);
+
+    expect(detail.status).toBe("ended");
+    expect(detail.history.map((h) => h.operation)).toEqual(["apply", "end"]);
+    expect(detail.history.at(-1)?.actor).toEqual({ kind: "system" });
+    expect(detail.history.at(-1)?.before?.status).toBe("pending-second-hold");
+    expect(detail.currentEstimate).toBeUndefined();
+    expect(detail.cancellationFeeIfCancelledNow).toBeUndefined();
+  });
+
   it("ない予約の id：404 と { error: not-found }", async () => {
     await expectError(await get("/admin/reservations/no-such-reservation"), 404, "not-found");
   });
@@ -963,6 +1015,31 @@ describe("管理 API：受付番号から探す（GET /admin/receipts/{受付番
     await applyViaForm("firm", "2026-10-20T10:00", "2026-10-20T12:00");
 
     await expectError(await get("/admin/receipts/ZZZZ9999"), 404, "not-found");
+  });
+
+  it.each([
+    ["英小文字", "abcd2345"],
+    ["7文字", "ABCD234"],
+    ["9文字", "ABCD23456"],
+    ["紛らわしい文字（0・O・1・I）を含む", "ABCD0O1I"],
+    ["記号を含む", "ABCD-234"],
+  ])(
+    "受付番号の形（ReceiptNumber）でない（%s：%s）：400 と { error: invalid-input }",
+    async (_, receipt) => {
+      await applyViaForm("firm", "2026-10-20T10:00", "2026-10-20T12:00");
+
+      await expectError(await get(`/admin/receipts/${receipt}`), 400, "invalid-input");
+    },
+  );
+
+  it("フォームの申込の受付番号を英小文字にしたもの：400 と { error: invalid-input }（形が違うので、探さない）", async () => {
+    const { receiptNumber } = await applyViaForm("firm", "2026-10-20T10:00", "2026-10-20T12:00");
+
+    await expectError(
+      await get(`/admin/receipts/${receiptNumber.toLowerCase()}`),
+      400,
+      "invalid-input",
+    );
   });
 });
 
