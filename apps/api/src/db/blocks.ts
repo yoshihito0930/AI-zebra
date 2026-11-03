@@ -290,7 +290,7 @@ function withoutBlock(state: DayState, id: string): OccupiedInterval[] {
   return state.intervals.filter((interval) => !(interval.kind === "block" && interval.id === id));
 }
 
-function blockKey(id: string): Record<string, AttributeValue> {
+export function blockKey(id: string): Record<string, AttributeValue> {
   return { pk: { S: `BLK#${id}` }, sk: { S: "META" } };
 }
 
@@ -361,7 +361,7 @@ async function readAdminBlock(
 }
 
 /** ブロック枠の META を読む。形が合わなければエラーを投げる（INV-4） */
-function parseBlockMeta(id: string, item: Item): BlockDetail {
+export function parseBlockMeta(id: string, item: Item): BlockDetail {
   const where = `BLK#${id} META`;
   const route = readString(item, "route", where);
   if (route !== "admin" && route !== "google-calendar") throw malformed(where, "route");
