@@ -6,3 +6,6 @@ coverage/
 .env.*
 .DS_Store
 .astro/
+
+# エージェントを別の作業ツリーで動かすときの置き場所（Agent の isolation: "worktree"）
+.claude/worktrees/
