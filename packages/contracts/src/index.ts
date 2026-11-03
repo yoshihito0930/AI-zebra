@@ -1,6 +1,18 @@
 // 公開APIのスキーマ（Zod）。API・ウィジェット・管理画面で同じ型を使う
 export { Yen } from "./money.ts";
 export {
+  AdminApproveRequest,
+  AdminEmptyRequest,
+  AdminError,
+  AdminOperationAccepted,
+  AdminReceiptLookup,
+  AdminRejected,
+  AdminReservationDetail,
+  AdminReservationList,
+  AdminReservationListQuery,
+  HoldingReservationStatus,
+} from "./admin.ts";
+export {
   ApplicationAccepted,
   ApplicationRejected,
   ApplicationRejection,
