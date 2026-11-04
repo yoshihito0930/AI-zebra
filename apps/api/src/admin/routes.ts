@@ -380,7 +380,7 @@ function estimateNow(detail: ReservationDetail, priceTable: PriceTable) {
 
 /**
  * 今取消したときのキャンセル料（確定金額で計算する。reservation-model.md「金額」）。日数は now の JST の日で数える（INV-7）。
- * 開始以降の本予約の取消は扱いが未決事項（booking-core が RangeError を投げる）なので、返さない
+ * 開始以降の本予約は取消できない（booking.md の未決事項。取消の操作は booking-core が invalid-status にする）ので、返さない
  */
 function cancellationFeeNow(
   detail: ReservationDetail & { status: "provisional" | "firm" | "second-hold" },
