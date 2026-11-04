@@ -7,14 +7,14 @@ const text = (max: number) => z.string().trim().min(1).max(max);
 const optionalText = (max: number) => z.string().trim().max(max).optional();
 
 /** メールアドレス：「〇〇@〇〇.〇〇」の形だけをゆるく確かめる。実在するかは確かめない */
-const Email = z
+export const Email = z
   .string()
   .trim()
   .max(254)
   .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
 
 /** 電話番号：先頭が0の10〜11桁の数字。ハイフンは可。+81 は受け付けない */
-const Phone = z
+export const Phone = z
   .string()
   .trim()
   .max(20)

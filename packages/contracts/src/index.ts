@@ -2,6 +2,11 @@
 export { Yen } from "./money.ts";
 export {
   AdminApproveRequest,
+  AdminBlockCreated,
+  AdminBlockRequest,
+  AdminChangeRequest,
+  AdminDirectEntryAccepted,
+  AdminDirectEntryRequest,
   AdminEmptyRequest,
   AdminError,
   AdminOperationAccepted,
@@ -10,6 +15,7 @@ export {
   AdminReservationDetail,
   AdminReservationList,
   AdminReservationListQuery,
+  AdminWarning,
   HoldingReservationStatus,
 } from "./admin.ts";
 export {

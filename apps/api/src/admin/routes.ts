@@ -227,7 +227,8 @@ function rejected(c: Context, error: AdminError): Response {
   return c.json(AdminRejected.parse({ error }), statusOf(error));
 }
 
-function statusOf(error: AdminError): 400 | 401 | 404 | 409 | 503 {
+/** エラーの理由から HTTP のステータスへ（admin-api.md「返すときの決まり」の表） */
+function statusOf(error: AdminError): 400 | 401 | 404 | 409 | 422 | 503 {
   switch (error) {
     case "invalid-input":
       return 400;
@@ -238,7 +239,17 @@ function statusOf(error: AdminError): 400 | 401 | 404 | 409 | 503 {
     case "not-pending":
     case "invalid-status":
     case "still-held":
+    case "not-changeable":
+    case "google-calendar-block":
+    case "unacknowledged-warnings":
       return 409;
+    case "not-on-30-minute-boundary":
+    case "shorter-than-2-hours":
+    case "longer-than-24-hours":
+    case "overlaps-existing":
+    case "no-provisional-to-hold":
+    case "more-than-90-days":
+      return 422;
     case "busy":
       return 503;
   }

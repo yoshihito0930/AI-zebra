@@ -1,7 +1,7 @@
 // 管理 API（管理画面のスタッフだけ）の形（docs/design-docs/admin-api.md）。1回目：一覧・詳細と、承認まわりの操作。
 // 外から来るクエリ・本文は、APIの境界でこのスキーマでパースする（INV-4）。余計なキーがあれば通さない（strictObject）
 import { z } from "zod";
-import { ReceiptNumber, ShootingType } from "./application.ts";
+import { Email, Phone, ReceiptNumber, ShootingType } from "./application.ts";
 import { Yen } from "./money.ts";
 import { ReservationStatus } from "./reservation-status.ts";
 
@@ -209,13 +209,113 @@ export const AdminOperationAccepted = z.strictObject({
 export type AdminOperationAccepted = z.infer<typeof AdminOperationAccepted>;
 
 /**
+ * 警告（管理者が確認すれば入れられる。docs/design-docs/admin-api.md「警告の確認」）。名前は公開APIの ApplicationRejection と同じ
+ * - past-24-hours-before-start：本予約の締め切り（開始の24時間前）を過ぎた
+ * - past-provisional-deadline：仮予約・第二キープの締め切り（仮予約の期限）を過ぎた
+ * - late-night-shorter-than-4-hours：深夜帯にかかり、4時間未満（2時間以上）
+ */
+export const AdminWarning = z.enum([
+  "past-24-hours-before-start",
+  "past-provisional-deadline",
+  "late-night-shorter-than-4-hours",
+]);
+export type AdminWarning = z.infer<typeof AdminWarning>;
+
+/** 確認した警告の一覧。省略は空と同じ（まだ何も確認していない） */
+const AcknowledgedWarnings = z
+  .array(AdminWarning)
+  .refine((warnings) => new Set(warnings).size === warnings.length, "同じ警告が2回ある")
+  .optional();
+
+const text = (max: number) => z.string().trim().min(1).max(max);
+
+/** 料金表のオプションの id。同じ id は1回まで（申込フォームと同じ） */
+const OptionIds = z
+  .array(z.string().min(1).max(50))
+  .max(10)
+  .refine((ids) => new Set(ids).size === ids.length, "同じオプションが2回ある");
+
+/** 予約の変更の本文（2回目a）。日時を変えないときも、今の日時を送る */
+export const AdminChangeRequest = z.strictObject({
+  start: DateTime,
+  end: DateTime,
+  partySize: z.number().int().min(1).max(100),
+  cycloramaFloorProtection: z.boolean(),
+  equipmentInsurance: z.boolean(),
+  optionIds: OptionIds,
+  confirmedPrice: Yen,
+  acknowledgedWarnings: AcknowledgedWarnings,
+});
+export type AdminChangeRequest = z.infer<typeof AdminChangeRequest>;
+
+/**
+ * 直接入力の本文（2回目a。booking.md「直接入れる予約のルール」）。お客様の情報は、氏名と、
+ * 電話番号かメールアドレスのどちらか1つが必須。入れた欄の形と長さの上限は申込フォームと同じ。人数の上限は設けない
+ * （15人以上は管理者が直接入れる。ここでは形の上限として100人まで）
+ */
+export const AdminDirectEntryRequest = z.strictObject({
+  kind: z.enum(["provisional", "firm", "second-hold"]),
+  start: DateTime,
+  end: DateTime,
+  partySize: z.number().int().min(1).max(100),
+  cycloramaFloorProtection: z.boolean(),
+  equipmentInsurance: z.boolean(),
+  optionIds: OptionIds,
+  confirmedPrice: Yen,
+  customer: z
+    .strictObject({
+      name: text(100),
+      companyName: text(100).optional(),
+      email: Email.optional(),
+      phone: Phone.optional(),
+      address: text(200).optional(),
+      photographerName: text(100).optional(),
+    })
+    .refine(
+      (c) => c.email !== undefined || c.phone !== undefined,
+      "メールアドレスか電話番号がない",
+    ),
+  shooting: z.strictObject({
+    types: z
+      .array(ShootingType)
+      .min(1)
+      .refine((types) => new Set(types).size === types.length, "同じ撮影内容が2回ある")
+      .optional(),
+    details: text(2000).optional(),
+    notes: text(2000).optional(),
+  }),
+  acknowledgedWarnings: AcknowledgedWarnings,
+});
+export type AdminDirectEntryRequest = z.infer<typeof AdminDirectEntryRequest>;
+
+/** 直接入力が成功したときの返事 */
+export const AdminDirectEntryAccepted = z.strictObject({ reservationId: z.string().min(1) });
+export type AdminDirectEntryAccepted = z.infer<typeof AdminDirectEntryAccepted>;
+
+/** ブロック枠を入れる・直す本文（2回目a）。直すときも全部を送る。メモがなければメモはない */
+export const AdminBlockRequest = z.strictObject({
+  start: DateTime,
+  end: DateTime,
+  bufferMinutes: z.union([z.literal(0), z.literal(30), z.literal(60)]),
+  memo: text(500).optional(),
+});
+export type AdminBlockRequest = z.infer<typeof AdminBlockRequest>;
+
+/** ブロック枠を入れたときの返事 */
+export const AdminBlockCreated = z.strictObject({ blockId: z.string().min(1) });
+export type AdminBlockCreated = z.infer<typeof AdminBlockCreated>;
+
+/**
  * 管理 API のエラーの理由（docs/design-docs/admin-api.md「返すときの決まり」）
  * - invalid-input：入力の形が正しくない（期間が62日を超える、from が to より後、を含む）
  * - unauthorized：管理者の id が取れない
- * - not-found：予約・受付番号がない
- * - not-pending／invalid-status／still-held：今の状態ではできない操作
+ * - not-found：予約・ブロック枠・受付番号がない
+ * - not-pending／invalid-status／still-held／not-changeable：今の状態ではできない操作
+ * - google-calendar-block：Googleカレンダーから取り込んだブロック枠は、直す・消すことができない
+ * - unacknowledged-warnings：確認していない警告がある（warnings に今の警告の一覧を付ける）
+ * - not-on-30-minute-boundary／shorter-than-2-hours／longer-than-24-hours／overlaps-existing／
+ *   no-provisional-to-hold／more-than-90-days：決まりで不可
  * - busy：混み合っている
- * 確認していない警告（unacknowledged-warnings。今の警告の一覧を付ける）は、2回目（変更・直接入力）で足す
  */
 export const AdminError = z.enum([
   "invalid-input",
@@ -224,9 +324,24 @@ export const AdminError = z.enum([
   "not-pending",
   "invalid-status",
   "still-held",
+  "not-changeable",
+  "google-calendar-block",
+  "unacknowledged-warnings",
+  "not-on-30-minute-boundary",
+  "shorter-than-2-hours",
+  "longer-than-24-hours",
+  "overlaps-existing",
+  "no-provisional-to-hold",
+  "more-than-90-days",
   "busy",
 ]);
 export type AdminError = z.infer<typeof AdminError>;
 
-export const AdminRejected = z.strictObject({ error: AdminError });
+/** エラーの返事。warnings は unacknowledged-warnings のときだけ、必ず付ける（1件以上） */
+export const AdminRejected = z
+  .strictObject({ error: AdminError, warnings: z.array(AdminWarning).min(1).optional() })
+  .refine(
+    (r) => (r.error === "unacknowledged-warnings") === (r.warnings !== undefined),
+    "warnings は unacknowledged-warnings のときだけ付ける",
+  );
 export type AdminRejected = z.infer<typeof AdminRejected>;
