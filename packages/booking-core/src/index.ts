@@ -83,6 +83,12 @@ export type {
   DirectEntryResult,
   DirectEntryWarning,
 } from "./direct-entry.ts";
+export { checkAdminDuration } from "./admin-time-rules.ts";
+export type {
+  AdminDurationRejection,
+  AdminDurationResult,
+  AdminDurationWarning,
+} from "./admin-time-rules.ts";
 export { checkReservationChangeTime } from "./reservation-change-time.ts";
 export type {
   ReservationChangeTimeInput,

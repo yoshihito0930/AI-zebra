@@ -1,23 +1,38 @@
-// 管理 API（管理画面のスタッフだけ）のルート。1回目：予約の一覧・詳細、受付番号から探す、承認・却下・昇格・取消・繰り上げ。
-// 形は docs/design-docs/admin-api.md、契約は packages/contracts の admin.ts。
+// 管理 API（管理画面のスタッフだけ）のルート。形は docs/design-docs/admin-api.md、契約は packages/contracts の admin.ts。
+// 1回目：予約の一覧・詳細、受付番号から探す、承認・却下・昇格・取消・繰り上げ
 // - GET  /admin/reservations?from=&to=&status=  一覧（AdminReservationListQuery → AdminReservationList）
 // - GET  /admin/reservations/:id                詳細（AdminReservationDetail）
 // - GET  /admin/receipts/:receiptNumber         受付番号から探す（AdminReceiptLookup）
 // - POST /admin/reservations/:id/approve        承認（AdminApproveRequest → AdminOperationAccepted）
 // - POST /admin/reservations/:id/reject|promote|cancel|move-up（AdminEmptyRequest → AdminOperationAccepted）
-// エラーは AdminRejected（{ error: <理由> }）。管理者の id が取れないときは、どのルートも 401
+// 2回目a：予約の変更・直接入力（警告の確認つき）、ブロック枠を入れる・直す・消す
+// - POST   /admin/reservations/:id/change       変更（AdminChangeRequest → 200 と AdminOperationAccepted）
+// - POST   /admin/reservations                  直接入力（AdminDirectEntryRequest → 201 と AdminDirectEntryAccepted）
+// - POST   /admin/blocks                        ブロック枠を入れる（AdminBlockRequest → 201 と AdminBlockCreated）
+// - PUT    /admin/blocks/:id                    ブロック枠を直す（AdminBlockRequest → 200。本文なし。契約がないため）
+// - DELETE /admin/blocks/:id                    ブロック枠を消す（本文は読まない → 200。本文なし）
+// エラーは AdminRejected（{ error: <理由> }。確認していない警告があるときは warnings も）。管理者の id が取れないときは、どのルートも 401
 // - 外から来るクエリ・本文は、最初に契約でパースする（INV-4）。返す本文も契約でパースしてから返す
-// - 判定と保存は保存の層（saveReservationOperation など）に、料金・キャンセル料の計算は booking-core に任せ、ここには同じ判定を書かない
+// - 判定と保存は保存の層（saveReservationOperation・saveDirectEntry・saveAdminBlock など）に、料金・キャンセル料の計算は
+//   booking-core に任せ、ここには同じ判定を書かない
+// - 警告の確認（変更・直接入力）は、保存の層に確認した警告の一覧を渡し、保存の層が不可の決まりと同じ読んだデータで警告を計算して比べる
+//   （ここで別に読んで警告を計算すると、読んでから保存までのほかの書き込みで、判定に使うデータが食い違うため）
 // - 日時は JST のオフセット付きの ISO 8601 で返す（INV-7）。操作の日時は API の現在時刻（deps.now）
 // - ログには、思わぬエラーの種類（name）だけを出す。本文・個人情報は出さない（INV-10。公開 API と同じ）
 import {
   calculateCancellationFee,
   calculatePriceFromTable,
+  checkAdminDuration,
   decidePlanId,
   holdsSlots,
 } from "@zebra/booking-core";
 import {
   AdminApproveRequest,
+  AdminBlockCreated,
+  AdminBlockRequest,
+  AdminChangeRequest,
+  AdminDirectEntryAccepted,
+  AdminDirectEntryRequest,
   AdminEmptyRequest,
   type AdminError,
   AdminOperationAccepted,
@@ -26,6 +41,7 @@ import {
   AdminReservationDetail,
   AdminReservationList,
   AdminReservationListQuery,
+  type AdminWarning,
   type PriceTable,
   ReceiptNumber,
 } from "@zebra/contracts";
@@ -39,6 +55,13 @@ import {
   listAdminReservationsInPeriod,
 } from "../db/admin-list.ts";
 import {
+  type AdminBlockInput,
+  deleteAdminBlock,
+  saveAdminBlock,
+  updateAdminBlock,
+} from "../db/blocks.ts";
+import { type DirectEntry, saveDirectEntry } from "../db/direct-entry.ts";
+import {
   type ReservationOperationInput,
   type SaveOperationFailure,
   type SaveOperationOptions,
@@ -50,6 +73,8 @@ import {
   JST,
   type ReservationDetail,
   type ReservationStore,
+  type StoredCustomerInfo,
+  type StoredShootingInfo,
   findReservationIdByReceiptNumber,
   getReservation,
 } from "../db/reservations.ts";
@@ -59,11 +84,11 @@ export interface AdminDeps {
   store: ReservationStore;
   /** API の現在時刻（INV-7）。操作の日時、今の見積・今取消したときのキャンセル料の計算に使う */
   now: () => DateTime;
-  /** 今の料金表。承認待ちの詳細で、見積を計算し直すのに使う */
+  /** 今の料金表。承認待ちの詳細・変更・直接入力で、見積を計算し直す（計算する）のに使う */
   priceTable: PriceTable;
   /** 管理者の id の取り出し方（本番は adminUserIdFromLambdaContext、手元は devAdminUserId） */
   adminUserId: AdminUserIdSource;
-  /** 操作の保存のやり直しの設定（混み合ったときの確認に使う） */
+  /** 操作の保存のやり直しの設定（混み合ったときの確認に使う）。どの操作の保存（変更・直接入力・ブロック枠を含む）にも渡す */
   save?: Pick<SaveOperationOptions, "maxAttempts" | "beforeWrite">;
 }
 
@@ -147,10 +172,15 @@ export function createAdminRoute(deps: AdminDeps): Hono {
       const result = await saveReservationOperation(deps.store, operation, {
         now: deps.now(),
         adminUserId,
-        ...(deps.save?.maxAttempts === undefined ? {} : { maxAttempts: deps.save.maxAttempts }),
-        ...(deps.save?.beforeWrite === undefined ? {} : { beforeWrite: deps.save.beforeWrite }),
+        ...retryOptions(deps),
       });
-      if (!result.ok) return rejected(c, errorOf(result.reason));
+      if (!result.ok) {
+        // 警告の確認は、確認した警告の一覧を渡したとき（変更）だけなので、1回目の操作では起きない
+        if (result.reason === "unacknowledged-warnings") {
+          throw new Error("1回目の操作では起きない理由");
+        }
+        return rejected(c, errorOf(result.reason));
+      }
       // 下書きは作るだけで送らない（INV-6。送るのは3回目の管理 API）
       return c.json(
         AdminOperationAccepted.parse({ drafts: result.drafts.map((saved) => saved.draft) }),
@@ -158,6 +188,139 @@ export function createAdminRoute(deps: AdminDeps): Hono {
       );
     });
   }
+
+  // 予約の変更。不可の決まり（30分単位・最短2時間・最長24時間・空き判定・変更できない状態）と警告は、保存の層が同じ読んだデータで判定する
+  route.post("/admin/reservations/:id/change", async (c) => {
+    const body = await readJsonBody(c.req.raw);
+    if (!body.ok) return rejected(c, "invalid-input");
+    const parsed = AdminChangeRequest.safeParse(body.value);
+    if (!parsed.success) return rejected(c, "invalid-input");
+    const request = parsed.data;
+    const range = rangeOf(request);
+    if (range === undefined || !knownOptions(deps.priceTable, request.optionIds)) {
+      return rejected(c, "invalid-input");
+    }
+
+    const result = await saveReservationOperation(
+      deps.store,
+      {
+        kind: "change",
+        reservationId: c.req.param("id"),
+        start: range.start,
+        end: range.end,
+        content: {
+          partySize: request.partySize,
+          cycloramaFloorProtection: request.cycloramaFloorProtection,
+          equipmentInsurance: request.equipmentInsurance,
+          optionIds: request.optionIds,
+        },
+        confirmedPrice: request.confirmedPrice,
+        // 見積は今の料金表で計算し直す（保存の層が履歴に残す）
+        priceTable: deps.priceTable,
+      },
+      {
+        now: deps.now(),
+        adminUserId: requireDefined(adminUserIdOf(c)),
+        ...retryOptions(deps),
+        // 省略は空と同じ（まだ何も確認していない）。渡すと、保存の層が確認していない警告で止める
+        acknowledgedWarnings: request.acknowledgedWarnings ?? [],
+      },
+    );
+    if (!result.ok) {
+      return result.reason === "unacknowledged-warnings"
+        ? unacknowledged(c, result.warnings)
+        : rejected(c, changeErrorOf(result.reason));
+    }
+    // 下書きは作るだけで送らない（INV-6）
+    return c.json(
+      AdminOperationAccepted.parse({ drafts: result.drafts.map((saved) => saved.draft) }),
+      200,
+    );
+  });
+
+  // 直接入力。経路は admin、バッファは初期値の60分（保存の層が決める）。不可の決まりと警告は、保存の層が同じ読んだデータで判定する
+  route.post("/admin/reservations", async (c) => {
+    const body = await readJsonBody(c.req.raw);
+    if (!body.ok) return rejected(c, "invalid-input");
+    const parsed = AdminDirectEntryRequest.safeParse(body.value);
+    if (!parsed.success) return rejected(c, "invalid-input");
+    const request = parsed.data;
+    const range = rangeOf(request);
+    if (range === undefined || !knownOptions(deps.priceTable, request.optionIds)) {
+      return rejected(c, "invalid-input");
+    }
+
+    // 見積は30分単位でない区間では計算できないので、時間の決まり（不可）を見積より先に確かめる（保存の層も同じ判定をもう一度する）
+    const duration = checkAdminDuration(range.start, range.end);
+    if (!duration.ok) return rejected(c, duration.reason);
+
+    // プランと見積は、今の料金表で決める（booking.md「料金」。INV-9。金額の計算は booking-core だけで行う）
+    const planId = decidePlanId(deps.priceTable, {
+      partySize: request.partySize,
+      cycloramaFloorProtection: request.cycloramaFloorProtection,
+    });
+    const estimate = calculatePriceFromTable(deps.priceTable, {
+      planId,
+      start: range.start,
+      end: range.end,
+      equipmentInsurance: request.equipmentInsurance,
+      optionIds: request.optionIds,
+    });
+    const entry: DirectEntry = {
+      kind: request.kind,
+      start: range.start,
+      end: range.end,
+      partySize: request.partySize,
+      cycloramaFloorProtection: request.cycloramaFloorProtection,
+      planId,
+      equipmentInsurance: request.equipmentInsurance,
+      optionIds: request.optionIds,
+      estimate,
+      confirmedPrice: request.confirmedPrice,
+      customer: storedCustomerOf(request.customer),
+      shooting: storedShootingOf(request.shooting),
+    };
+
+    const result = await saveDirectEntry(deps.store, entry, {
+      now: deps.now(),
+      adminUserId: requireDefined(adminUserIdOf(c)),
+      ...retryOptions(deps),
+      // 省略は空と同じ（まだ何も確認していない）
+      acknowledgedWarnings: request.acknowledgedWarnings ?? [],
+    });
+    if (!result.ok) {
+      return result.reason === "unacknowledged-warnings"
+        ? unacknowledged(c, result.warnings)
+        : rejected(c, result.reason);
+    }
+    return c.json(AdminDirectEntryAccepted.parse({ reservationId: result.id }), 201);
+  });
+
+  // ブロック枠を入れる（警告はない）
+  route.post("/admin/blocks", async (c) => {
+    const block = await readBlockRequest(c.req.raw);
+    if (block === undefined) return rejected(c, "invalid-input");
+    const result = await saveAdminBlock(deps.store, block, retryOptions(deps));
+    if (!result.ok) return rejected(c, result.reason);
+    return c.json(AdminBlockCreated.parse({ blockId: result.id }), 201);
+  });
+
+  // ブロック枠を直す（直すときも全部を送る。メモを送らなければメモはなくなる）
+  route.put("/admin/blocks/:id", async (c) => {
+    const block = await readBlockRequest(c.req.raw);
+    if (block === undefined) return rejected(c, "invalid-input");
+    const result = await updateAdminBlock(deps.store, c.req.param("id"), block, retryOptions(deps));
+    if (!result.ok) return rejected(c, result.reason);
+    // 返す本文の形は資料・契約にないので、本文は返さない
+    return c.body(null, 200);
+  });
+
+  // ブロック枠を消す（本文は読まない）
+  route.delete("/admin/blocks/:id", async (c) => {
+    const result = await deleteAdminBlock(deps.store, c.req.param("id"), retryOptions(deps));
+    if (!result.ok) return rejected(c, result.reason);
+    return c.body(null, 200);
+  });
 
   // 思わぬエラー：お客様の情報が混ざらないよう、エラーの種類（name）だけをログに出し、中身は返さない（INV-10）
   route.onError((error, c) => {
@@ -221,10 +384,89 @@ function parseOperation(
   return AdminEmptyRequest.safeParse(body).success ? { kind, reservationId } : undefined;
 }
 
+/**
+ * 本文の予約区間（ブロック枠の区間）を DateTime にする。日時はオフセット付きの ISO 8601（契約で確かめ済み）で、
+ * どのゾーンで来ても、判定は booking-core が JST で行う（INV-7）。終わりが開始以前の区間は、決まりで判定できない入力の誤りとして undefined
+ */
+function rangeOf(request: {
+  readonly start: string;
+  readonly end: string;
+}): { readonly start: DateTime; readonly end: DateTime } | undefined {
+  const start = DateTime.fromISO(request.start, { setZone: true });
+  const end = DateTime.fromISO(request.end, { setZone: true });
+  if (!start.isValid || !end.isValid || end.toMillis() <= start.toMillis()) return undefined;
+  return { start, end };
+}
+
+/** オプションが今の料金表にあるものだけか（料金表にない id は、料金を決められない入力の誤り。公開 API の申込と同じ） */
+function knownOptions(priceTable: PriceTable, optionIds: readonly string[]): boolean {
+  return optionIds.every((id) => priceTable.options.some((option) => option.id === id));
+}
+
+/** ブロック枠を入れる・直す本文を読み、契約（AdminBlockRequest）でパースする。正しくなければ undefined */
+async function readBlockRequest(request: Request): Promise<AdminBlockInput | undefined> {
+  const body = await readJsonBody(request);
+  if (!body.ok) return undefined;
+  const parsed = AdminBlockRequest.safeParse(body.value);
+  if (!parsed.success) return undefined;
+  const range = rangeOf(parsed.data);
+  if (range === undefined) return undefined;
+  const { bufferMinutes, memo } = parsed.data;
+  return { ...range, bufferMinutes, ...(memo === undefined ? {} : { memo }) };
+}
+
+/**
+ * 直接入力のお客様の情報を、保存の形にする（入れていない欄は持たない）。
+ * 氏名と、電話番号かメールアドレスのどちらか1つが必須なことは、契約で確かめ済み
+ */
+function storedCustomerOf(customer: AdminDirectEntryRequest["customer"]): StoredCustomerInfo {
+  const optional = {
+    ...(customer.companyName === undefined ? {} : { companyName: customer.companyName }),
+    ...(customer.address === undefined ? {} : { address: customer.address }),
+    ...(customer.photographerName === undefined
+      ? {}
+      : { photographerName: customer.photographerName }),
+  };
+  if (customer.email !== undefined) {
+    return {
+      name: customer.name,
+      ...optional,
+      email: customer.email,
+      ...(customer.phone === undefined ? {} : { phone: customer.phone }),
+    };
+  }
+  return { name: customer.name, ...optional, phone: requireDefined(customer.phone) };
+}
+
+/** 直接入力の撮影の内容を、保存の形にする（どの欄も任意。入れていない欄は持たない） */
+function storedShootingOf(shooting: AdminDirectEntryRequest["shooting"]): StoredShootingInfo {
+  return {
+    ...(shooting.types === undefined ? {} : { types: shooting.types }),
+    ...(shooting.details === undefined ? {} : { details: shooting.details }),
+    ...(shooting.notes === undefined ? {} : { notes: shooting.notes }),
+  };
+}
+
+/** 保存の層に渡す、やり直しの設定（AdminDeps.save）。どの操作の保存にも同じものを渡す */
+function retryOptions(deps: AdminDeps): Pick<SaveOperationOptions, "maxAttempts" | "beforeWrite"> {
+  return {
+    ...(deps.save?.maxAttempts === undefined ? {} : { maxAttempts: deps.save.maxAttempts }),
+    ...(deps.save?.beforeWrite === undefined ? {} : { beforeWrite: deps.save.beforeWrite }),
+  };
+}
+
 // ---- 返事 ----
 
 function rejected(c: Context, error: AdminError): Response {
   return c.json(AdminRejected.parse({ error }), statusOf(error));
+}
+
+/** 確認していない警告がある：409 と、今の警告の一覧（確認したものも含めた全部） */
+function unacknowledged(c: Context, warnings: readonly AdminWarning[]): Response {
+  return c.json(
+    AdminRejected.parse({ error: "unacknowledged-warnings", warnings: [...warnings] }),
+    statusOf("unacknowledged-warnings"),
+  );
 }
 
 /** エラーの理由から HTTP のステータスへ（admin-api.md「返すときの決まり」の表） */
@@ -273,6 +515,27 @@ function errorOf(reason: SaveOperationFailure): AdminError {
     case "shorter-than-2-hours":
     case "longer-than-24-hours":
       throw new Error("1回目の操作では起きない理由");
+  }
+}
+
+/**
+ * 変更の保存の、できない理由から管理 API のエラーへ。承認・却下・昇格・取消・繰り上げだけの理由
+ * （承認待ちでない・その操作ができる状態でない・まだ重なっている）は変更では起きないので、起きたら思わぬエラーにする
+ */
+function changeErrorOf(reason: SaveOperationFailure): AdminError {
+  switch (reason) {
+    case "not-found":
+    case "not-changeable":
+    case "overlaps-existing":
+    case "not-on-30-minute-boundary":
+    case "shorter-than-2-hours":
+    case "longer-than-24-hours":
+    case "busy":
+      return reason;
+    case "not-pending":
+    case "invalid-status":
+    case "still-held":
+      throw new Error("変更では起きない理由");
   }
 }
 

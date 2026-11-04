@@ -4,7 +4,12 @@
 // → 衝突したら読み直す」を行う。日ごとのアイテム・予約の META・PII・履歴の書き方は、申込の保存（reservations.ts）と共有する。
 // 個人情報（お客様の情報・撮影の内容）は PII のアイテムにだけ置く（INV-10）。ログは出さない。
 import { randomUUID } from "node:crypto";
-import { checkDirectEntry, type DirectEntryInput, occupiedRange } from "@zebra/booking-core";
+import {
+  checkDirectEntry,
+  type DirectEntryInput,
+  type DirectEntryWarning,
+  occupiedRange,
+} from "@zebra/booking-core";
 import type { ReservationStatus, Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
 import {
@@ -49,11 +54,18 @@ export interface SaveDirectEntryOptions {
   maxAttempts?: number;
   /** 読んで判定したあと、書く直前に呼ぶ（テストで同時の書き込みを起こすため）。attempt は1から */
   beforeWrite?: (attempt: number) => Promise<void>;
+  /**
+   * 管理者が確認した警告（admin-api.md「警告の確認（2回目）」）。渡すと、不可の決まりの判定が可になったあと、
+   * 同じ判定（checkDirectEntry）の警告と比べ、確認していない警告が1つでもあれば書かずに unacknowledged-warnings と
+   * 今の警告の一覧を返す。省略すると警告では止めない（管理者の確認を受けて呼ぶ前提）
+   */
+  acknowledgedWarnings?: readonly DirectEntryWarning[];
 }
 
 /**
  * 直接入力が不可の理由。保存の層では、例外を認めない決まりだけで止める（締め切りと、深夜帯にかかる予約の最短4時間は
- * 警告なので、管理者の確認を受けて呼ぶ前提で、ここでは止めない）。値の名前は公開 API の契約（ApplicationRejection）と同じ
+ * 警告なので、ここでは不可にしない。確認していない警告で止めるのは options.acknowledgedWarnings を渡したときだけ）。
+ * 値の名前は公開 API の契約（ApplicationRejection）と同じ
  * - not-on-30-minute-boundary／shorter-than-2-hours／longer-than-24-hours：時間の単位と利用時間
  * - overlaps-existing：空き判定（承認待ちの仮予約との重なりを含む）
  * - no-provisional-to-hold：第二キープが、どの承認済みの仮予約とも重ならない
@@ -68,7 +80,19 @@ export type DirectEntryFailureReason =
   | "busy";
 
 export type SaveDirectEntryResult =
-  { ok: true; id: string } | { ok: false; reason: DirectEntryFailureReason };
+  | { ok: true; id: string }
+  | { ok: false; reason: DirectEntryFailureReason }
+  | UnacknowledgedDirectEntryWarnings;
+
+/**
+ * 確認していない警告がある（options.acknowledgedWarnings を渡したときだけ）。
+ * warnings は、確認したものも含めた今の警告の全部（1件以上）。何も書かない
+ */
+export interface UnacknowledgedDirectEntryWarnings {
+  ok: false;
+  reason: "unacknowledged-warnings";
+  warnings: readonly DirectEntryWarning[];
+}
 
 /**
  * 直接入力を保存する。日ごとのアイテム・予約の META（経路は admin、受付番号なし、確定金額あり）・個人情報・
@@ -101,12 +125,24 @@ export async function saveDirectEntry(
     // 1. かかわる JST の日の日ごとのアイテムを、強い整合性で読む
     const dayStates = await Promise.all(days.map((day) => readDayForWrite(store, day)));
 
-    // 2. booking-core で判定する。警告（締め切り、深夜帯の最短4時間）は、管理者の確認を受けて呼ぶ前提なので止めない
+    // 2. booking-core で判定する。警告（締め切り、深夜帯の最短4時間）は、options.acknowledgedWarnings を渡したときだけ確かめる
     const { reservations, blocks } = toBookingCoreInput(
       dayStates.flatMap((state) => state.intervals),
     );
     const judged = checkDirectEntry(directEntryInput(entry, options.now, reservations, blocks));
     if (!judged.ok) return { kind: "stop", result: { ok: false, reason: judged.reason } };
+
+    // 警告の確認：不可の決まりがすべて可になったあと、同じ判定の警告と比べる。確認した一覧に今は出ていない警告が入っていてもよい
+    const acknowledged = options.acknowledgedWarnings;
+    if (
+      acknowledged !== undefined &&
+      judged.warnings.some((warning) => !acknowledged.includes(warning))
+    ) {
+      return {
+        kind: "stop",
+        result: { ok: false, reason: "unacknowledged-warnings", warnings: judged.warnings },
+      };
+    }
 
     // 3. 日ごとのアイテム（版番号の条件つき）・META・PII・履歴を、1回の TransactWriteItems で書く
     const provisionalIds = entry.kind === "second-hold" ? judged.provisionalIds : undefined;
