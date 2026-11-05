@@ -75,6 +75,15 @@ export type {
   ReservationChangeFailureReason,
   ReservationChangeResult,
 } from "./reservation-change.ts";
+export { applyBufferChange } from "./buffer-change.ts";
+export type {
+  BufferChange,
+  BufferChangeDraft,
+  BufferChangeFailureReason,
+  BufferChangeMoveUpNotice,
+  BufferChangeInput as ReservationBufferChangeInput,
+  BufferChangeResult as ReservationBufferChangeResult,
+} from "./buffer-change.ts";
 export { checkDirectEntry } from "./direct-entry.ts";
 export type {
   DirectEntryInput,

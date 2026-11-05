@@ -1,6 +1,8 @@
 // 予約の変更（docs/product-specs/booking.md「予約の変更」、docs/design-docs/reservation-model.md「状態と操作」「第二キープと仮予約」「金額」）。
 // 入出力を持たない純粋な関数。現在時刻は使わない（INV-5、INV-7）。
 // 枠と予約の書き込み（INV-2）と、下書きの保存・送信（INV-6）は呼び出す側が行う。
+// 空き判定・第二キープの外し方・繰り上げ案内・解放と確保の計算（applyOccupiedChange）と、変更できる状態（isChangeable）は、
+// バッファの切り替え（buffer-change.ts）と共有する（同じ判定を2か所に持たない）。共有の部品は index.ts からは出さない。
 import type { PriceTable, ReservationStatus, Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
 import {
@@ -120,7 +122,8 @@ export function applyReservationChange(input: {
     end: change.end,
     confirmedAmount: change.confirmedAmount,
   };
-  const nextOccupied = occupiedRangeOf(changed, changed.bufferMinutes, "変更後の予約区間");
+  // 不正な区間は、見積の計算より先に RangeError にする
+  occupiedRangeOf(changed, changed.bufferMinutes, "変更後の予約区間");
   const estimate = calculatePriceFromTable(priceTable, {
     planId: decidePlanId(priceTable, {
       partySize: change.content.partySize,
@@ -132,7 +135,52 @@ export function applyReservationChange(input: {
     optionIds: change.content.optionIds,
   });
 
-  // 空き判定から除くもの：自分自身の変更前の占有区間と、仮予約なら付いている第二キープ（承認待ちを含む）の枠
+  const occupiedChange = applyOccupiedChange({ reservations, blocks, target, changed });
+  if (!occupiedChange.ok) {
+    return occupiedChange;
+  }
+  return {
+    ok: true,
+    reservations: occupiedChange.reservations,
+    released: occupiedChange.released,
+    secured: occupiedChange.secured,
+    estimate,
+    drafts: [{ kind: "change", reservationId: target.id }, ...occupiedChange.moveUpNotices],
+  };
+}
+
+/** 仮予約に付かなくなった第二キープ（承認済み）への繰り上げ案内の下書き */
+export type MoveUpNotice = Extract<ReservationDraft, { kind: "move-up-notice" }>;
+
+/**
+ * 予約の占有区間を変える操作（変更・バッファの切り替え）で共有する、空き判定と、第二キープの外し方・繰り上げ案内・解放と確保の計算
+ * （reservation-model.md「状態と操作」「第二キープと仮予約」。同じ判定を2か所に持たない）。
+ * target は操作の前の予約（reservations の中のもの）、changed は操作のあとの target（占有区間だけが変わったもの）。
+ * - 空き判定：changed の占有区間が、自分自身の前の占有区間と、仮予約なら付いている第二キープ（承認待ちを含む）の枠を除いた、
+ *   枠を確保している予約・ブロック枠と重なれば overlaps-existing（booking.md「第二キープが付いている仮予約の日時を変える」）
+ * - 仮予約の占有区間が変わって重ならなくなった第二キープ（承認待ちを含む）は、付く仮予約の id からその仮予約を外す
+ * - moveUpNotices：この操作で重ならなくなった承認済みの第二キープへの繰り上げ案内（仮予約が取消になったときと同じ形）
+ * - released・secured：枠を確保している予約の占有区間の、操作の前後の差
+ * 共有の部品なので index.ts からは出さない
+ */
+export function applyOccupiedChange(input: {
+  readonly reservations: readonly Reservation[];
+  readonly blocks: readonly ExistingBlock[];
+  readonly target: Reservation;
+  readonly changed: Reservation;
+}):
+  | {
+      readonly ok: true;
+      readonly reservations: readonly Reservation[];
+      readonly released: readonly TimeRange[];
+      readonly secured: readonly TimeRange[];
+      readonly moveUpNotices: readonly MoveUpNotice[];
+    }
+  | { readonly ok: false; readonly reason: "overlaps-existing" } {
+  const { reservations, blocks, target, changed } = input;
+  const nextOccupied = occupiedOf(changed);
+
+  // 空き判定から除くもの：自分自身の前の占有区間と、仮予約なら付いている第二キープ（承認待ちを含む）の枠
   const isOwnSecondHold = (reservation: Reservation): boolean =>
     target.status === "provisional" &&
     isSecondHoldStatus(reservation.status) &&
@@ -144,7 +192,7 @@ export function applyReservationChange(input: {
     return { ok: false, reason: "overlaps-existing" };
   }
 
-  // 仮予約を動かして重ならなくなった第二キープ（承認待ちを含む）は、その仮予約に付かなくなる（reservation-model.md「第二キープと仮予約」）
+  // 仮予約の占有区間が変わって重ならなくなった第二キープ（承認待ちを含む）は、その仮予約に付かなくなる（reservation-model.md「第二キープと仮予約」）
   const detached = new Set(
     reservations.filter(
       (reservation) =>
@@ -164,10 +212,10 @@ export function applyReservationChange(input: {
     return reservation;
   });
 
-  const drafts: ReservationChangeDraft[] = [{ kind: "change", reservationId: target.id }];
-  // この変更で重ならなくなった承認済みの第二キープには、仮予約が取消になったときと同じ案内の下書きを作る。
+  // この操作で重ならなくなった承認済みの第二キープには、仮予約が取消になったときと同じ案内の下書きを作る。
   // 承認待ちの第二キープは、承認待ちのまま（下書きなし。仮予約の取消と同じ）。
-  // 変更の前から重なっていなかったもの（バッファの切り替えなどで）は、この変更で重ならなくなったのではないので、案内を作らない
+  // 操作の前から重なっていなかったもの（ほかの操作で）は、この操作で重ならなくなったのではないので、案内を作らない
+  const moveUpNotices: MoveUpNotice[] = [];
   const targetOccupiedBefore = occupiedOf(target);
   for (const [index, reservation] of reservations.entries()) {
     const secondHold = after[index];
@@ -177,7 +225,7 @@ export function applyReservationChange(input: {
       reservation.status === "second-hold" &&
       overlaps(targetOccupiedBefore, occupiedOf(reservation))
     ) {
-      drafts.push({
+      moveUpNotices.push({
         kind: "move-up-notice",
         reservationId: secondHold.id,
         remainingProvisionalIds: provisionalsStillHolding(secondHold, after),
@@ -192,12 +240,14 @@ export function applyReservationChange(input: {
     reservations: after,
     released: subtractRanges(beforeHolding, afterHolding),
     secured: subtractRanges(afterHolding, beforeHolding),
-    estimate,
-    drafts,
+    moveUpNotices,
   };
 }
 
-/** 変更できる状態か。承認済みの仮予約・本予約だけ（applyReservationChange の説明） */
-function isChangeable(status: ReservationStatus): boolean {
+/**
+ * 変更できる状態か。承認済みの仮予約・本予約だけ（applyReservationChange の説明）。
+ * バッファの切り替え（buffer-change.ts）も同じ状態だけを切り替えられる（booking.md「バッファを30分に縮める」）
+ */
+export function isChangeable(status: ReservationStatus): boolean {
   return status === "provisional" || status === "firm";
 }
