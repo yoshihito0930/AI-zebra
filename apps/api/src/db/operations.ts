@@ -20,6 +20,7 @@ import {
 import {
   type ExistingBlock,
   type Reservation,
+  type ReservationChangeTimeWarning,
   applyReservationChange,
   applyReservationOperation,
   approveReservation,
@@ -98,6 +99,13 @@ export interface SaveOperationOptions {
   readonly maxAttempts?: number;
   /** 判定が可になったあと、TransactWriteItems の直前に呼ぶ（attempt は1から）。テストで、読んだあとの書き込みを作るため */
   readonly beforeWrite?: (attempt: number) => Promise<void>;
+  /**
+   * 変更のときだけ使う：管理者が確認した警告（admin-api.md「警告の確認（2回目）」）。渡すと、不可の決まりの判定が可になったあと、
+   * 同じ読んだデータ（対象の予約の状態と変更前の予約区間）で警告（checkReservationChangeTime）を計算し、
+   * 確認していない警告が1つでもあれば書かずに unacknowledged-warnings と今の警告の一覧を返す。
+   * 省略すると警告では止めない（管理者の確認を受けて呼ぶ前提）。ほかの操作では使わない
+   */
+  readonly acknowledgedWarnings?: readonly ReservationChangeTimeWarning[];
 }
 
 /** 下書きの種類と、差し込む値。reservationId はあて先の予約（アイテムの pk は RES#<この id>） */
@@ -158,7 +166,18 @@ export type SaveOperationFailure =
 
 export type SaveOperationResult =
   | { readonly ok: true; readonly drafts: readonly SavedDraft[] }
-  | { readonly ok: false; readonly reason: SaveOperationFailure };
+  | { readonly ok: false; readonly reason: SaveOperationFailure }
+  | UnacknowledgedChangeWarnings;
+
+/**
+ * 変更で、確認していない警告がある（options.acknowledgedWarnings を渡したときだけ）。
+ * warnings は、確認したものも含めた今の警告の全部（1件以上）。何も書かない
+ */
+export interface UnacknowledgedChangeWarnings {
+  readonly ok: false;
+  readonly reason: "unacknowledged-warnings";
+  readonly warnings: readonly ReservationChangeTimeWarning[];
+}
 
 /**
  * 予約への操作を保存する。予約の META、日ごとのアイテム（操作にかかわる JST の日すべて）、履歴、下書きを
@@ -209,6 +228,10 @@ export async function saveReservationOperation(
       for (const day of missing) extraDays.add(day);
       continue;
     }
+
+    // 警告の確認（変更のとき）：不可の決まりがすべて可になったあと、同じ読んだデータで計算した警告と比べる
+    const unacknowledged = unacknowledgedChangeWarnings(judged, options.acknowledgedWarnings);
+    if (unacknowledged !== undefined) return unacknowledged;
 
     // 3. 日ごとのアイテム（版番号の条件つき）・META・履歴・下書きを、1回の TransactWriteItems で書く
     const at = utcIso(options.now);
@@ -418,12 +441,28 @@ interface Judged {
   /** 操作のあとの予約（読んだ予約すべて） */
   readonly after: readonly Reservation[];
   readonly drafts: readonly OperationDraft[];
-  /** 変更のときだけ：計算し直した見積と、変更後の中身（プランは料金表で決め直したもの） */
+  /** 変更のときだけ：計算し直した見積と、変更後の中身（プランは料金表で決め直したもの）、変更の警告 */
   readonly change?: {
     readonly estimate: Estimate;
     readonly content: ReservationChangeContent;
     readonly planId: string;
+    readonly warnings: readonly ReservationChangeTimeWarning[];
   };
+}
+
+/**
+ * 確認していない変更の警告があれば、書かずに返す結果。確認した一覧に今は出ていない警告が入っていてもよい。
+ * acknowledged を渡さないとき、変更でないときは undefined（警告では止めない）
+ */
+function unacknowledgedChangeWarnings(
+  judged: Judged,
+  acknowledged: readonly ReservationChangeTimeWarning[] | undefined,
+): UnacknowledgedChangeWarnings | undefined {
+  if (acknowledged === undefined || judged.change === undefined) return undefined;
+  const { warnings } = judged.change;
+  return warnings.some((warning) => !acknowledged.includes(warning))
+    ? { ok: false, reason: "unacknowledged-warnings", warnings }
+    : undefined;
 }
 
 /**
@@ -476,8 +515,8 @@ function judge(
       return { ok: true, after: result.reservations, drafts: result.drafts };
     }
     case "change": {
-      const timeRejection = changeTimeRejection(operation, reservations, now);
-      if (timeRejection !== undefined) return { ok: false, reason: timeRejection };
+      const time = changeTimeCheck(operation, reservations, now);
+      if (!time.ok) return time;
       const result = applyReservationChange({
         reservations,
         blocks: state.blocks,
@@ -499,6 +538,7 @@ function judge(
           estimate: result.estimate,
           content: operation.content,
           planId: decidePlanId(operation.priceTable, operation.content),
+          warnings: time.warnings,
         },
       };
     }
@@ -506,27 +546,30 @@ function judge(
 }
 
 /**
- * 変更で日時を変えるときの、不可の決まり（30分単位、最短2時間〈深夜帯にかかっても〉、最長24時間。booking.md「予約の変更」）。
- * 判定は booking-core（checkReservationChangeTime）に任せる。操作の日時は options.now（管理者が変更を操作した時点）。
- * 不可なら理由を返し、そうでなければ undefined。
- * 警告（締め切りと、深夜帯にかかる予約の最短4時間）は、管理者が確認したうえで呼ぶ前提なので、この層では扱わない（管理 API の仕事）。
- * 対象の予約がない・変更できない状態なら、ここでは判定せず、applyReservationChange の not-found・not-changeable に任せる
+ * 変更で日時を変えるときの、不可の決まり（30分単位、最短2時間〈深夜帯にかかっても〉、最長24時間。booking.md「予約の変更」）と警告
+ * （締め切りと、深夜帯にかかる予約の最短4時間）。判定は booking-core（checkReservationChangeTime）に任せる。
+ * 操作の日時は options.now（管理者が変更を操作した時点）。対象の予約・変更前の予約区間は、この試みで読んだもの。
+ * 不可なら理由を返し、そうでなければ警告の一覧（日時を変えないときは空）。警告で止めるかは、options.acknowledgedWarnings を渡したときだけ
+ * （unacknowledgedChangeWarnings）。
+ * 対象の予約がない・変更できない状態なら、ここでは判定せず（警告もなし）、applyReservationChange の not-found・not-changeable に任せる
  */
-function changeTimeRejection(
+function changeTimeCheck(
   operation: Extract<ReservationOperationInput, { kind: "change" }>,
   reservations: readonly Reservation[],
   now: DateTime,
-): SaveOperationFailure | undefined {
+):
+  | { readonly ok: true; readonly warnings: readonly ReservationChangeTimeWarning[] }
+  | { readonly ok: false; readonly reason: SaveOperationFailure } {
   const target = reservations.find((reservation) => reservation.id === operation.reservationId);
-  if (target === undefined) return undefined;
-  if (target.status !== "provisional" && target.status !== "firm") return undefined;
-  const result = checkReservationChangeTime({
+  if (target === undefined) return { ok: true, warnings: [] };
+  if (target.status !== "provisional" && target.status !== "firm")
+    return { ok: true, warnings: [] };
+  return checkReservationChangeTime({
     status: target.status,
     before: { start: target.start, end: target.end },
     after: { start: operation.start, end: operation.end },
     changedAt: now,
   });
-  return result.ok ? undefined : result.reason;
 }
 
 function toCoreReservation(meta: ReservationMeta): Reservation {
