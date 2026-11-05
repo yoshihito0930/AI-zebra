@@ -11,6 +11,9 @@
 // - POST   /admin/blocks                        ブロック枠を入れる（AdminBlockRequest → 201 と AdminBlockCreated）
 // - PUT    /admin/blocks/:id                    ブロック枠を直す（AdminBlockRequest → 200。本文なし。契約がないため）
 // - DELETE /admin/blocks/:id                    ブロック枠を消す（本文は読まない → 200。本文なし）
+// 2回目b：バッファの切り替え、お客様の情報・撮影の内容の変更
+// - POST   /admin/reservations/:id/buffer       バッファの切り替え（AdminBufferRequest → 200 と AdminOperationAccepted）
+// - PUT    /admin/reservations/:id/customer     お客様の情報・撮影の内容の変更（AdminCustomerInfoRequest → 200。本文なし）
 // エラーは AdminRejected（{ error: <理由> }。確認していない警告があるときは warnings も）。管理者の id が取れないときは、どのルートも 401
 // - 外から来るクエリ・本文は、最初に契約でパースする（INV-4）。返す本文も契約でパースしてから返す
 // - 判定と保存は保存の層（saveReservationOperation・saveDirectEntry・saveAdminBlock など）に、料金・キャンセル料の計算は
@@ -30,7 +33,9 @@ import {
   AdminApproveRequest,
   AdminBlockCreated,
   AdminBlockRequest,
+  AdminBufferRequest,
   AdminChangeRequest,
+  AdminCustomerInfoRequest,
   AdminDirectEntryAccepted,
   AdminDirectEntryRequest,
   AdminEmptyRequest,
@@ -60,6 +65,8 @@ import {
   saveAdminBlock,
   updateAdminBlock,
 } from "../db/blocks.ts";
+import { saveBufferChange } from "../db/buffer-change.ts";
+import { saveCustomerInfo } from "../db/customer-info.ts";
 import { type DirectEntry, saveDirectEntry } from "../db/direct-entry.ts";
 import {
   type ReservationOperationInput,
@@ -296,6 +303,47 @@ export function createAdminRoute(deps: AdminDeps): Hono {
     return c.json(AdminDirectEntryAccepted.parse({ reservationId: result.id }), 201);
   });
 
+  // バッファの切り替え。判定（変更できる状態・空き判定・第二キープの扱い）は保存の層が読んだデータで行う。警告はない
+  route.post("/admin/reservations/:id/buffer", async (c) => {
+    const body = await readJsonBody(c.req.raw);
+    if (!body.ok) return rejected(c, "invalid-input");
+    const parsed = AdminBufferRequest.safeParse(body.value);
+    if (!parsed.success) return rejected(c, "invalid-input");
+
+    const result = await saveBufferChange(
+      deps.store,
+      { reservationId: c.req.param("id"), bufferMinutes: parsed.data.bufferMinutes },
+      { now: deps.now(), adminUserId: requireDefined(adminUserIdOf(c)), ...retryOptions(deps) },
+    );
+    if (!result.ok) return rejected(c, result.reason);
+    // 今と同じバッファなら、何も書かずに空の一覧。下書きは作るだけで送らない（INV-6）
+    return c.json(
+      AdminOperationAccepted.parse({ drafts: result.drafts.map((saved) => saved.draft) }),
+      200,
+    );
+  });
+
+  // お客様の情報・撮影の内容の変更。どの状態の予約でも直せる（空き判定はしない）。全部の欄を送って置き換える
+  route.put("/admin/reservations/:id/customer", async (c) => {
+    const body = await readJsonBody(c.req.raw);
+    if (!body.ok) return rejected(c, "invalid-input");
+    const parsed = AdminCustomerInfoRequest.safeParse(body.value);
+    if (!parsed.success) return rejected(c, "invalid-input");
+
+    const result = await saveCustomerInfo(
+      deps.store,
+      {
+        reservationId: c.req.param("id"),
+        customer: storedCustomerOf(parsed.data.customer),
+        shooting: storedShootingOf(parsed.data.shooting),
+      },
+      { now: deps.now(), adminUserId: requireDefined(adminUserIdOf(c)) },
+    );
+    if (!result.ok) return rejected(c, result.reason);
+    // 返す本文の形は資料・契約にない（ブロック枠を直すのと同じ）ので、本文は返さない
+    return c.body(null, 200);
+  });
+
   // ブロック枠を入れる（警告はない）
   route.post("/admin/blocks", async (c) => {
     const block = await readBlockRequest(c.req.raw);
@@ -416,10 +464,10 @@ async function readBlockRequest(request: Request): Promise<AdminBlockInput | und
 }
 
 /**
- * 直接入力のお客様の情報を、保存の形にする（入れていない欄は持たない）。
+ * 直接入力・お客様の情報の変更のお客様の情報を、保存の形にする（入れていない欄は持たない）。
  * 氏名と、電話番号かメールアドレスのどちらか1つが必須なことは、契約で確かめ済み
  */
-function storedCustomerOf(customer: AdminDirectEntryRequest["customer"]): StoredCustomerInfo {
+function storedCustomerOf(customer: AdminCustomerInfoRequest["customer"]): StoredCustomerInfo {
   const optional = {
     ...(customer.companyName === undefined ? {} : { companyName: customer.companyName }),
     ...(customer.address === undefined ? {} : { address: customer.address }),
@@ -438,8 +486,8 @@ function storedCustomerOf(customer: AdminDirectEntryRequest["customer"]): Stored
   return { name: customer.name, ...optional, phone: requireDefined(customer.phone) };
 }
 
-/** 直接入力の撮影の内容を、保存の形にする（どの欄も任意。入れていない欄は持たない） */
-function storedShootingOf(shooting: AdminDirectEntryRequest["shooting"]): StoredShootingInfo {
+/** 直接入力・お客様の情報の変更の撮影の内容を、保存の形にする（どの欄も任意。入れていない欄は持たない） */
+function storedShootingOf(shooting: AdminCustomerInfoRequest["shooting"]): StoredShootingInfo {
   return {
     ...(shooting.types === undefined ? {} : { types: shooting.types }),
     ...(shooting.details === undefined ? {} : { details: shooting.details }),

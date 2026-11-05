@@ -1,7 +1,9 @@
 // バッファの切り替えの保存（docs/product-specs/booking.md「バッファを30分に縮める」、reservation-model.md「状態と操作」の
 // バッファの切り替え、dynamodb-keys.md「書き込み」、admin-api.md「バッファの切り替え・お客様の情報の変更（2回目b）」）。
-// スタブ：形（名前・引数・戻り値）だけを決める。中身は実装担当が書く（docs/TESTING.md 手順4）
-import type { SaveOperationOptions, SavedDraft } from "./operations.ts";
+// 判定は booking-core（applyBufferChange）に任せ、読む → 判定 → 1トランザクションで書く → 衝突したら読み直す、の流れは
+// 予約への操作の保存（operations.ts の saveAdminOperation）をそのまま使う（日ごとのアイテム・META・履歴・下書きの書き方を共有する）。
+// 個人情報（PII のアイテム）は読まず、書かない（INV-10）。ログは出さない。
+import { type SaveOperationOptions, type SavedDraft, saveAdminOperation } from "./operations.ts";
 import type { ReservationStore } from "./reservations.ts";
 
 /** バッファの切り替え：どの予約のバッファを、何分にするか */
@@ -40,13 +42,29 @@ export type SaveBufferChangeResult =
  * バッファ・仮予約に付かなくなった第二キープの META・履歴（操作は buffer-change、前後のバッファ）・下書きを
  * 1トランザクションで書く（INV-2）。不可なら何も書かない。今と同じバッファなら何も書かない
  */
-export function saveBufferChange(
+export async function saveBufferChange(
   store: ReservationStore,
   input: BufferChangeInput,
   options: SaveBufferChangeOptions,
 ): Promise<SaveBufferChangeResult> {
-  void store;
-  void input;
-  void options;
-  throw new Error("未実装");
+  const result = await saveAdminOperation(
+    store,
+    {
+      kind: "buffer-change",
+      reservationId: input.reservationId,
+      bufferMinutes: input.bufferMinutes,
+    },
+    options,
+  );
+  if (result.ok) return { ok: true, changed: result.changed, drafts: result.drafts };
+  switch (result.reason) {
+    case "not-found":
+    case "not-changeable":
+    case "overlaps-existing":
+    case "busy":
+      return { ok: false, reason: result.reason };
+    default:
+      // ほかの理由（承認待ちでない、時間の決まり、警告など）は、バッファの切り替えの判定では起きない
+      throw new Error("バッファの切り替えでは起きない理由");
+  }
 }

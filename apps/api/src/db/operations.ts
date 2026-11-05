@@ -1,9 +1,10 @@
-// 予約への操作（承認・却下・昇格・取消・繰り上げ・変更）の保存（DynamoDB）。
+// 予約への操作（承認・却下・昇格・取消・繰り上げ・変更・バッファの切り替え）の保存（DynamoDB）。
 // 根拠：docs/design-docs/dynamodb-keys.md（日ごとのアイテム、書き込みの手順、下書きのアイテム）、
 // reservation-model.md（状態と操作、第二キープと仮予約、金額、履歴）、core-beliefs.md（INV-1、INV-2、INV-6、INV-7、INV-9、INV-10）。
-// 判定は booking-core（approveReservation・rejectReservation・applyReservationOperation・applyReservationChange）に任せ、
-// この層は「読む → 判定 → 1トランザクションで書く（版番号が読んだときと同じこと）→ 衝突したら読み直す」を行う。
-// バッファの切り替え・直接入力・ブロック枠の保存は、この関数では扱わない。
+// 判定は booking-core（approveReservation・rejectReservation・applyReservationOperation・applyReservationChange・
+// applyBufferChange）に任せ、この層は「読む → 判定 → 1トランザクションで書く（版番号が読んだときと同じこと）→ 衝突したら読み直す」を行う。
+// バッファの切り替えも同じ流れ（saveAdminOperation）で書く。入口は buffer-change.ts の saveBufferChange。
+// 直接入力・ブロック枠・お客様の情報の変更の保存は、ここでは扱わない。
 // 属性名・履歴の形は、申込の保存（reservations.ts）と同じにする。個人情報（PII のアイテム）は読まず、書かない（INV-10）。
 // ログは出さない（エラーのメッセージにも、属性の名前とキーだけを書き、値は書かない）。
 import {
@@ -21,6 +22,7 @@ import {
   type ExistingBlock,
   type Reservation,
   type ReservationChangeTimeWarning,
+  applyBufferChange,
   applyReservationChange,
   applyReservationOperation,
   approveReservation,
@@ -88,6 +90,18 @@ export type ReservationOperationInput =
       readonly content: ReservationChangeContent;
       readonly confirmedPrice: Yen;
       readonly priceTable: PriceTable;
+    };
+
+/**
+ * 保存の層の中で扱う、管理者の操作の全部。ReservationOperationInput に、バッファの切り替えを足したもの。
+ * バッファの切り替えの入口は buffer-change.ts の saveBufferChange（結果の形が違うため、saveReservationOperation では受けない）
+ */
+export type AdminOperationInput =
+  | ReservationOperationInput
+  | {
+      readonly kind: "buffer-change";
+      readonly reservationId: string;
+      readonly bufferMinutes: 30 | 60;
     };
 
 export interface SaveOperationOptions {
@@ -188,6 +202,27 @@ export async function saveReservationOperation(
   operation: ReservationOperationInput,
   options: SaveOperationOptions,
 ): Promise<SaveOperationResult> {
+  const result = await saveAdminOperation(store, operation, options);
+  return result.ok ? { ok: true, drafts: result.drafts } : result;
+}
+
+/**
+ * saveAdminOperation の結果。成功なら changed（バッファの切り替えで今と同じバッファなら false で、何も書いていない。
+ * ほかの操作では常に true）と、書いた下書き
+ */
+export type SaveAdminOperationResult =
+  | { readonly ok: true; readonly changed: boolean; readonly drafts: readonly SavedDraft[] }
+  | Exclude<SaveOperationResult, { readonly ok: true }>;
+
+/**
+ * 管理者の操作（バッファの切り替えを含む）を保存する。手順は saveReservationOperation と同じ
+ * （dynamodb-keys.md「書き込み」）。判定で何もしないとなったら（今と同じバッファ）、何も書かずに changed: false を返す
+ */
+export async function saveAdminOperation(
+  store: ReservationStore,
+  operation: AdminOperationInput,
+  options: SaveOperationOptions,
+): Promise<SaveAdminOperationResult> {
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
     throw new RangeError("maxAttempts は 1 以上の整数");
@@ -216,6 +251,7 @@ export async function saveReservationOperation(
     // 2. booking-core で判定する
     const judged = judge(operation, state, options.now);
     if (!judged.ok) return judged;
+    if (judged.unchanged === true) return { ok: true, changed: false, drafts: [] };
 
     const modified = modifiedReservations(state, judged.after, operation.reservationId);
     const needed = daysToWrite(modified);
@@ -249,7 +285,7 @@ export async function saveReservationOperation(
 
     try {
       await store.client.send(new TransactWriteItemsCommand({ TransactItems: transactItems }));
-      return { ok: true, drafts: savedDrafts };
+      return { ok: true, changed: true, drafts: savedDrafts };
     } catch (error) {
       // 4. 条件で失敗した（読んだあとに同じ日・同じ予約に別の書き込みがあった）なら、読み直してやり直す
       if (isRetryableConflict(error)) {
@@ -294,7 +330,7 @@ type ReadResult =
  */
 async function readOperationState(
   store: ReservationStore,
-  operation: ReservationOperationInput,
+  operation: AdminOperationInput,
   extraDays: ReadonlySet<string>,
 ): Promise<ReadResult> {
   const first = await getMeta(store, operation.reservationId);
@@ -420,14 +456,18 @@ function daysWithEndDay(start: DateTime, end: DateTime): string[] {
 }
 
 /**
- * 変更後の占有区間がかかる日。変更後の区間が不正なら読まない
+ * 変更後（バッファの切り替えなら、切り替えたあと）の占有区間がかかる日。変更後の区間が不正なら読まない
  * （変更できない予約なら not-changeable を返すなど、不正な区間の扱いは booking-core の判定の順に任せる）
  */
-function changeDays(operation: ReservationOperationInput, meta: ReservationMeta): string[] {
-  if (operation.kind !== "change") return [];
+function changeDays(operation: AdminOperationInput, meta: ReservationMeta): string[] {
+  if (operation.kind !== "change" && operation.kind !== "buffer-change") return [];
+  const next =
+    operation.kind === "change"
+      ? { start: operation.start, end: operation.end, bufferMinutes: meta.bufferMinutes }
+      : { start: meta.start, end: meta.end, bufferMinutes: operation.bufferMinutes };
   let occupied: { start: DateTime; end: DateTime };
   try {
-    occupied = occupiedRange({ start: operation.start, end: operation.end }, meta.bufferMinutes);
+    occupied = occupiedRange(next, next.bufferMinutes);
   } catch (error) {
     if (error instanceof RangeError) return [];
     throw error;
@@ -441,6 +481,8 @@ interface Judged {
   /** 操作のあとの予約（読んだ予約すべて） */
   readonly after: readonly Reservation[];
   readonly drafts: readonly OperationDraft[];
+  /** バッファの切り替えで、今と同じバッファのとき true（何も書かない） */
+  readonly unchanged?: boolean;
   /** 変更のときだけ：計算し直した見積と、変更後の中身（プランは料金表で決め直したもの）、変更の警告 */
   readonly change?: {
     readonly estimate: Estimate;
@@ -469,10 +511,11 @@ function unacknowledgedChangeWarnings(
  * booking-core で判定する。理由は booking-core の理由をそのまま返す
  * （承認・却下は not-found・not-pending、昇格・取消・繰り上げは not-found・invalid-status・still-held、
  * 変更は not-found・not-changeable・overlaps-existing と、日時の決まり（checkReservationChangeTime）の
- * not-on-30-minute-boundary・shorter-than-2-hours・longer-than-24-hours。どれも SaveOperationFailure に同じ名前である）
+ * not-on-30-minute-boundary・shorter-than-2-hours・longer-than-24-hours、
+ * バッファの切り替えは not-found・not-changeable・overlaps-existing。どれも SaveOperationFailure に同じ名前である）
  */
 function judge(
-  operation: ReservationOperationInput,
+  operation: AdminOperationInput,
   state: OperationState,
   now: DateTime,
 ): Judged | { readonly ok: false; readonly reason: SaveOperationFailure } {
@@ -540,6 +583,21 @@ function judge(
           planId: decidePlanId(operation.priceTable, operation.content),
           warnings: time.warnings,
         },
+      };
+    }
+    case "buffer-change": {
+      // 締め切りや時間の決まりは確かめない（予約区間は変わらない。booking.md「バッファを30分に縮める」）
+      const result = applyBufferChange({
+        reservations,
+        blocks: state.blocks,
+        change: { reservationId: operation.reservationId, bufferMinutes: operation.bufferMinutes },
+      });
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        after: result.reservations,
+        drafts: result.drafts,
+        unchanged: !result.changed,
       };
     }
   }
@@ -652,10 +710,11 @@ const HISTORY_OPERATION = {
   cancel: "cancel",
   "move-up": "move-up",
   change: "change",
-} as const satisfies Record<ReservationOperationInput["kind"], HistoryOperation>;
+  "buffer-change": "buffer-change",
+} as const satisfies Record<AdminOperationInput["kind"], HistoryOperation>;
 
 interface WriteInput {
-  readonly operation: ReservationOperationInput;
+  readonly operation: AdminOperationInput;
   readonly state: OperationState;
   readonly modified: readonly ModifiedReservation[];
   readonly writeDays: ReadonlySet<string>;
@@ -696,7 +755,7 @@ async function buildWrite(
         actor: actorAttribute(
           entry.isTarget
             ? { kind: "admin", userId: input.adminUserId }
-            : // 昇格に続く終了や、仮予約の変更で付かなくなった第二キープは、システムが行う
+            : // 昇格に続く終了や、仮予約の変更・バッファの切り替えで付かなくなった第二キープは、システムが行う
               { kind: "system" },
         ),
         operation: {
@@ -751,8 +810,15 @@ async function buildWrite(
 /** 連番の桁数（historySortKey と同じ） */
 const SEQUENCE_DIGITS = 4;
 
-/** その予約の、prefix（HIST#<日時># か DRAFT#<日時>#）で始まるアイテムの連番の最大。なければ 0 */
-async function lastSequence(store: ReservationStore, pk: string, prefix: string): Promise<number> {
+/**
+ * その予約の、prefix（HIST#<日時># か DRAFT#<日時>#）で始まるアイテムの連番の最大。なければ 0。
+ * お客様の情報の変更の保存（customer-info.ts）でも、履歴の連番を決めるのに使う
+ */
+export async function lastSequence(
+  store: ReservationStore,
+  pk: string,
+  prefix: string,
+): Promise<number> {
   let last = 0;
   let startKey: Item | undefined;
   do {
@@ -876,6 +942,8 @@ function metaUpdateItem(
     status: { S: after.status },
     start: { S: utcIso(after.start) },
     end: { S: utcIso(after.end) },
+    // バッファの切り替えで変わる。ほかの操作では読んだときと同じ値
+    bufferMinutes: { N: String(after.bufferMinutes) },
     updatedAt: { S: at },
   };
   const remove: string[] = [];

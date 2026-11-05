@@ -458,11 +458,52 @@ export async function getReservation(
     .sort((a, b) => (a["sk"]?.S ?? "").localeCompare(b["sk"]?.S ?? ""))
     .map((item) => parseHistory(item, `${pk} ${item["sk"]?.S ?? ""}`));
 
+  return { ...parseReservationMeta(id, meta), ...parsePii(id, pii), history };
+}
+
+/** 予約の個人情報のアイテム（PII）を読む。形が合わなければエラーを投げる（INV-4）。値はエラーに書かない（INV-10） */
+export function parsePii(
+  id: string,
+  pii: Item,
+): { customer: StoredCustomerInfo; shooting: StoredShootingInfo } {
+  const where = `RES#${id} PII`;
   return {
-    ...parseReservationMeta(id, meta),
-    customer: parseCustomer(readMap(pii, "customer", `${pk} PII`), `${pk} PII`),
-    shooting: parseShooting(readMap(pii, "shooting", `${pk} PII`), `${pk} PII`),
-    history,
+    customer: parseCustomer(readMap(pii, "customer", where), where),
+    shooting: parseShooting(readMap(pii, "shooting", where), where),
+  };
+}
+
+/**
+ * 予約の個人情報のアイテム（PII）。お客様の情報と撮影の内容は、入れた欄だけを書く（ない欄は属性を持たない）。
+ * 申込・直接入力（newReservationWriteItems）と、お客様の情報の変更（customer-info.ts）で同じ形にする
+ */
+export function piiItem(
+  id: string,
+  customer: StoredCustomerInfo,
+  shooting: StoredShootingInfo,
+): Item {
+  const optionalString = (name: string, value: string | undefined): Item =>
+    value === undefined ? {} : { [name]: { S: value } };
+  return {
+    pk: { S: `RES#${id}` },
+    sk: { S: "PII" },
+    customer: {
+      M: {
+        name: { S: customer.name },
+        ...optionalString("companyName", customer.companyName),
+        ...optionalString("email", customer.email),
+        ...optionalString("phone", customer.phone),
+        ...optionalString("address", customer.address),
+        ...optionalString("photographerName", customer.photographerName),
+      },
+    },
+    shooting: {
+      M: {
+        ...(shooting.types === undefined ? {} : { types: stringList(shooting.types) }),
+        ...optionalString("details", shooting.details),
+        ...optionalString("notes", shooting.notes),
+      },
+    },
   };
 }
 
@@ -737,30 +778,7 @@ export function newReservationWriteItems(
     gsi1sk: { S: start },
   };
 
-  const { customer, shooting } = reservation;
-  const optionalString = (name: string, value: string | undefined): Item =>
-    value === undefined ? {} : { [name]: { S: value } };
-  const pii: Record<string, AttributeValue> = {
-    pk: { S: pk },
-    sk: { S: "PII" },
-    customer: {
-      M: {
-        name: { S: customer.name },
-        ...optionalString("companyName", customer.companyName),
-        ...optionalString("email", customer.email),
-        ...optionalString("phone", customer.phone),
-        ...optionalString("address", customer.address),
-        ...optionalString("photographerName", customer.photographerName),
-      },
-    },
-    shooting: {
-      M: {
-        ...(shooting.types === undefined ? {} : { types: stringList(shooting.types) }),
-        ...optionalString("details", shooting.details),
-        ...optionalString("notes", shooting.notes),
-      },
-    },
-  };
+  const pii = piiItem(id, reservation.customer, reservation.shooting);
 
   const history: Record<string, AttributeValue> = {
     pk: { S: pk },
