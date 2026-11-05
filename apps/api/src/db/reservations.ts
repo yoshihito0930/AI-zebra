@@ -363,7 +363,8 @@ export type HistoryOperation =
   | "move-up"
   | "change"
   | "buffer-change"
-  | "direct-entry";
+  | "direct-entry"
+  | "customer-info-change";
 
 /** 履歴に残す、操作の前後の値 */
 export interface HistorySnapshot {
@@ -1143,6 +1144,7 @@ const HISTORY_OPERATIONS: ReadonlySet<string> = new Set<HistoryOperation>([
   "change",
   "buffer-change",
   "direct-entry",
+  "customer-info-change",
 ]);
 
 function parseHistory(item: Item, where: string): HistoryEntry {
