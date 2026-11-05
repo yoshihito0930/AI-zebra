@@ -1,4 +1,4 @@
-// 管理 API（管理画面のスタッフだけ）の形（docs/design-docs/admin-api.md）。1回目：一覧・詳細と、承認まわりの操作。
+// 管理 API（管理画面のスタッフだけ）の形（docs/design-docs/admin-api.md）。
 // 外から来るクエリ・本文は、APIの境界でこのスキーマでパースする（INV-4）。余計なキーがあれば通さない（strictObject）
 import { z } from "zod";
 import { Email, Phone, ReceiptNumber, ShootingType } from "./application.ts";
@@ -86,6 +86,24 @@ const HistorySnapshot = z.strictObject({
   optionIds: z.array(z.string().min(1)).optional(),
 });
 
+/**
+ * お客様の情報・撮影の内容の項目の名前（履歴の changedFields。2回目b）。並びは、この一覧の順
+ * - name／companyName／email／phone／address／photographerName：お客様の情報（本文の customer の欄）
+ * - shootingTypes／shootingDetails／shootingNotes：撮影の内容（本文の shooting の types・details・notes）
+ */
+export const AdminCustomerField = z.enum([
+  "name",
+  "companyName",
+  "email",
+  "phone",
+  "address",
+  "photographerName",
+  "shootingTypes",
+  "shootingDetails",
+  "shootingNotes",
+]);
+export type AdminCustomerField = z.infer<typeof AdminCustomerField>;
+
 const HistoryEntry = z.strictObject({
   at: DateTime,
   actor: z.discriminatedUnion("kind", [
@@ -105,11 +123,12 @@ const HistoryEntry = z.strictObject({
     "change",
     "buffer-change",
     "direct-entry",
+    "customer-info-change",
   ]),
   before: HistorySnapshot.optional(),
   after: HistorySnapshot.optional(),
-  /** お客様の情報や撮影の内容が変わったときの、変わった項目の名前だけ */
-  changedFields: z.array(z.string().min(1)).optional(),
+  /** お客様の情報や撮影の内容が変わったときの、変わった項目の名前だけ（中身は書かない。INV-10） */
+  changedFields: z.array(AdminCustomerField).min(1).optional(),
   /** 変更のときに料金表で計算し直した見積 */
   estimate: Estimate.optional(),
 });
@@ -249,8 +268,33 @@ export const AdminChangeRequest = z.strictObject({
 export type AdminChangeRequest = z.infer<typeof AdminChangeRequest>;
 
 /**
- * 直接入力の本文（2回目a。booking.md「直接入れる予約のルール」）。お客様の情報は、氏名と、
- * 電話番号かメールアドレスのどちらか1つが必須。入れた欄の形と長さの上限は申込フォームと同じ。人数の上限は設けない
+ * 管理者が入れる・直すお客様の情報。氏名と、電話番号かメールアドレスのどちらか1つが必須。
+ * 入れた欄の形と長さの上限は申込フォームと同じ（booking.md「直接入れる予約のルール」）
+ */
+const AdminCustomerInfo = z
+  .strictObject({
+    name: text(100),
+    companyName: text(100).optional(),
+    email: Email.optional(),
+    phone: Phone.optional(),
+    address: text(200).optional(),
+    photographerName: text(100).optional(),
+  })
+  .refine((c) => c.email !== undefined || c.phone !== undefined, "メールアドレスか電話番号がない");
+
+/** 管理者が入れる・直す撮影の内容。どれも任意 */
+const AdminShootingInfo = z.strictObject({
+  types: z
+    .array(ShootingType)
+    .min(1)
+    .refine((types) => new Set(types).size === types.length, "同じ撮影内容が2回ある")
+    .optional(),
+  details: text(2000).optional(),
+  notes: text(2000).optional(),
+});
+
+/**
+ * 直接入力の本文（2回目a。booking.md「直接入れる予約のルール」）。人数の上限は設けない
  * （15人以上は管理者が直接入れる。ここでは形の上限として100人まで）
  */
 export const AdminDirectEntryRequest = z.strictObject({
@@ -262,28 +306,8 @@ export const AdminDirectEntryRequest = z.strictObject({
   equipmentInsurance: z.boolean(),
   optionIds: OptionIds,
   confirmedPrice: Yen,
-  customer: z
-    .strictObject({
-      name: text(100),
-      companyName: text(100).optional(),
-      email: Email.optional(),
-      phone: Phone.optional(),
-      address: text(200).optional(),
-      photographerName: text(100).optional(),
-    })
-    .refine(
-      (c) => c.email !== undefined || c.phone !== undefined,
-      "メールアドレスか電話番号がない",
-    ),
-  shooting: z.strictObject({
-    types: z
-      .array(ShootingType)
-      .min(1)
-      .refine((types) => new Set(types).size === types.length, "同じ撮影内容が2回ある")
-      .optional(),
-    details: text(2000).optional(),
-    notes: text(2000).optional(),
-  }),
+  customer: AdminCustomerInfo,
+  shooting: AdminShootingInfo,
   acknowledgedWarnings: AcknowledgedWarnings,
 });
 export type AdminDirectEntryRequest = z.infer<typeof AdminDirectEntryRequest>;
@@ -291,6 +315,22 @@ export type AdminDirectEntryRequest = z.infer<typeof AdminDirectEntryRequest>;
 /** 直接入力が成功したときの返事 */
 export const AdminDirectEntryAccepted = z.strictObject({ reservationId: z.string().min(1) });
 export type AdminDirectEntryAccepted = z.infer<typeof AdminDirectEntryAccepted>;
+
+/** バッファの切り替えの本文（2回目b。booking.md「バッファを30分に縮める」） */
+export const AdminBufferRequest = z.strictObject({
+  bufferMinutes: z.union([z.literal(30), z.literal(60)]),
+});
+export type AdminBufferRequest = z.infer<typeof AdminBufferRequest>;
+
+/**
+ * お客様の情報・撮影の内容の変更の本文（2回目b。booking.md「お客様の情報・撮影の内容を直す」）。
+ * 形は直接入力の customer・shooting と同じ。全部を送って置き換え、送らなかった欄は消える
+ */
+export const AdminCustomerInfoRequest = z.strictObject({
+  customer: AdminCustomerInfo,
+  shooting: AdminShootingInfo,
+});
+export type AdminCustomerInfoRequest = z.infer<typeof AdminCustomerInfoRequest>;
 
 /** ブロック枠を入れる・直す本文（2回目a）。直すときも全部を送る。メモがなければメモはない */
 export const AdminBlockRequest = z.strictObject({

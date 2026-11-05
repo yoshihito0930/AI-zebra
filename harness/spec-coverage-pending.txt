@@ -4,3 +4,6 @@
 
 # docs/product-specs/index.md
 Googleカレンダーの取り込み（並行稼働のため）
+
+# docs/product-specs/booking.md
+お客様の情報・撮影の内容を直す
