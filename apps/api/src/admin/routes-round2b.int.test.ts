@@ -17,7 +17,7 @@ import {
   Yen,
 } from "@zebra/contracts";
 import { DateTime } from "luxon";
-import { inspect } from "node:util";
+import { inspect, isDeepStrictEqual } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveBufferChange } from "../db/buffer-change.ts";
 import { createLocalDynamoClient } from "../db/client.ts";
@@ -44,6 +44,8 @@ import { type AdminDeps, createAdminRoute } from "./routes.ts";
 //   何も書かずに 200 と空の一覧
 // - お客様の情報の変更の成功は 200 で本文なし（admin-api.md「成功したら 200（本文なし。ブロック枠を直すのと同じ）」）。
 //   本文が空であることを確かめる
+// - お客様の情報の変更では、PII と履歴1件のほかに、予約の META の更新日時（API の現在時刻）も変わる。META のほかの属性と、
+//   日ごとのアイテム・下書きは変わらない。変わった項目がなければ、更新日時も含めて何も書かない（admin-api.md）
 // - 「空にする」は、その欄を送らないこと（全部を送って置き換え、送らなかった欄は消える。契約では、入れた欄は1文字以上）
 // - 「不可（連絡先が1つもない）」「不可（氏名は必須）」は、本文が契約（AdminCustomerInfoRequest）を通らないので
 //   400 invalid-input（admin-api.md「返すときの決まり」の「入力の形が正しくない」）
@@ -449,14 +451,39 @@ async function expectNothingWritten(before: readonly PlainItem[]): Promise<void>
 }
 
 /**
- * お客様の情報の変更のあと、変わったのがその予約の PII と、増えた履歴1件だけであることを確かめる
- * （日ごとのアイテム・META・下書きは書かない。admin-api.md「お客様の情報・撮影の内容の変更」）
+ * 予約の META で変わったのが更新日時だけであることを確かめる。更新日時の属性名は資料にないので、
+ * 「属性の名前の集まりは変わらず、値が変わった属性はちょうど1つで、その値は操作の日時（UTC。INV-7）」として確かめる
  */
-async function expectOnlyPiiAndOneHistoryWritten(
+function expectOnlyUpdatedAtChanged(
+  before: PlainItem | undefined,
+  after: PlainItem | undefined,
+  at: DateTime,
+): void {
+  expect(before).toBeDefined();
+  expect(after).toBeDefined();
+  if (before === undefined || after === undefined) return;
+  expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort());
+  const changed = Object.keys(after).filter((key) => !isDeepStrictEqual(after[key], before[key]));
+  expect(changed, "META で値が変わった属性").toHaveLength(1);
+  const value = after[changed[0] ?? ""];
+  expect(typeof value).toBe("string");
+  const parsed = DateTime.fromISO(String(value), { setZone: true });
+  expect(parsed.offset).toBe(0);
+  expect(parsed.toMillis()).toBe(at.toMillis());
+}
+
+/**
+ * お客様の情報の変更のあと、変わったのがその予約の PII と、増えた履歴1件と、その予約の META の更新日時だけであることを
+ * 確かめる（日ごとのアイテム・下書きは書かない。META のほかの属性は変わらない。admin-api.md「お客様の情報・撮影の内容の変更」）。
+ * 詳細の更新日時が、API の現在時刻（JST のオフセット付き）になっていることも確かめる
+ */
+async function expectOnlyPiiHistoryAndUpdatedAtWritten(
   before: readonly PlainItem[],
   id: string,
+  at: DateTime = now,
 ): Promise<void> {
   const after = await scanAll();
+  const isMeta = (item: PlainItem) => item["pk"] === `RES#${id}` && item["sk"] === "META";
   const beforeKeys = new Set(before.map(itemKey));
   const added = after.filter((item) => !beforeKeys.has(itemKey(item)));
   expect(added.map(itemKey)).toHaveLength(1);
@@ -467,10 +494,15 @@ async function expectOnlyPiiAndOneHistoryWritten(
       items.filter(
         (item) =>
           !(item["pk"] === `RES#${id}` && item["sk"] === "PII") &&
+          !isMeta(item) &&
           !added.some((a) => itemKey(a) === itemKey(item)),
       ),
     );
   expect(untouched(after)).toEqual(untouched(before));
+  expectOnlyUpdatedAtChanged(before.find(isMeta), after.find(isMeta), at);
+  const detail = await detailJson(id);
+  expectJstOffset(detail.updatedAt);
+  expect(DateTime.fromISO(detail.updatedAt, { setZone: true }).toMillis()).toBe(at.toMillis());
 }
 
 /** 日ごとのアイテムにある占有区間 */
@@ -554,7 +586,7 @@ describe("お客様の情報・撮影の内容を直す", () => {
     expectJstOffset(entry.at);
     expect(entry.changedFields).toEqual(["phone"]);
     expectNoPersonalValuesIn(entry);
-    await expectOnlyPiiAndOneHistoryWritten(before, a);
+    await expectOnlyPiiHistoryAndUpdatedAtWritten(before, a);
   });
 
   // 「空にする」：住所の欄を送らない（全部を送って置き換え、送らなかった欄は空になる）
@@ -637,7 +669,7 @@ describe("お客様の情報・撮影の内容を直す", () => {
     expect(detail.status).toBe("cancelled");
     expect(detail.customer.email).toBe(newEmail);
     expect(lastHistory(detail).changedFields).toEqual(["email"]);
-    await expectOnlyPiiAndOneHistoryWritten(before, a);
+    await expectOnlyPiiHistoryAndUpdatedAtWritten(before, a);
   });
 
   it("本予約、管理者が撮影詳細を直す：直る。履歴には「撮影詳細」とだけ残る", async () => {
@@ -660,6 +692,7 @@ describe("お客様の情報・撮影の内容を直す", () => {
     expectNoPersonalValuesIn(entry);
   });
 
+  // 変わった項目がなければ、PII・履歴・META の更新日時を含めて何も書かない（admin-api.md）
   it("本予約、管理者が今と同じ内容を送る：何もしない（履歴を残さない）", async () => {
     const a = await prepareA();
     const before = await scanAll();
@@ -671,7 +704,7 @@ describe("お客様の情報・撮影の内容を直す", () => {
 
 describe("管理 API：お客様の情報・撮影の内容の変更（PUT /admin/reservations/{id}/customer）", () => {
   // booking.md「どの状態の予約でも直せる（承認待ち・取消・終了も）」
-  it("承認待ち（本）・仮予約・第二キープ・承認待ち（第二キープ）・終了の予約の電話番号を直す：どれも 200。状態は変わらず、日ごとのアイテム・META・下書きは書かない", async () => {
+  it("承認待ち（本）・仮予約・第二キープ・承認待ち（第二キープ）・終了の予約の電話番号を直す：どれも 200。状態は変わらず、日ごとのアイテム・下書きは書かない。META は更新日時だけが変わる", async () => {
     const pendingFirm = await apply("firm", "2026-10-21T09:00", "2026-10-21T12:00");
     const p = await applyApproved("provisional", "2026-10-22T13:00", "2026-10-22T15:00");
     const k = await applyApproved("second-hold", "2026-10-22T14:00", "2026-10-22T17:00");
@@ -699,7 +732,7 @@ describe("管理 API：お客様の情報・撮影の内容の変更（PUT /admi
       expect(detail.status, status).toBe(status);
       expect(detail.customer.phone, status).toBe(newPhone);
       expect(lastHistory(detail).changedFields, status).toEqual(["phone"]);
-      await expectOnlyPiiAndOneHistoryWritten(before, id);
+      await expectOnlyPiiHistoryAndUpdatedAtWritten(before, id);
       expect(await unsentDraftCount(), status).toBe(drafts);
     }
   });
@@ -769,8 +802,9 @@ describe("管理 API：お客様の情報・撮影の内容の変更（PUT /admi
     await expectNothingWritten(before);
   });
 
-  it("API の現在時刻を UTC で表して渡す：履歴の日時は同じ時点で、JST のオフセット付きで返る（INV-7）", async () => {
+  it("API の現在時刻を UTC で表して渡す：履歴の日時と予約の更新日時は同じ時点で、JST のオフセット付きで返る（INV-7）", async () => {
     const a = await prepareA();
+    const before = await scanAll();
 
     await expectSavedWithoutBody(
       await putCustomer(
@@ -784,6 +818,7 @@ describe("管理 API：お客様の情報・撮影の内容の変更（PUT /admi
     const entry = lastHistory(await detailJson(a));
     expectJstOffset(entry.at);
     expect(DateTime.fromISO(entry.at, { setZone: true }).toMillis()).toBe(now.toMillis());
+    await expectOnlyPiiHistoryAndUpdatedAtWritten(before, a, now);
   });
 });
 

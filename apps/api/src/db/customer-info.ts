@@ -16,7 +16,7 @@ export interface CustomerInfoChange {
 }
 
 export interface SaveCustomerInfoOptions {
-  /** 現在時刻（履歴の日時）。INV-7 */
+  /** 現在時刻（予約の更新日時・履歴の日時）。INV-7 */
   now: DateTime;
   /** 操作した管理者のユーザー id（履歴の「誰が」） */
   adminUserId: string;
@@ -31,8 +31,8 @@ export type SaveCustomerInfoResult =
 
 /**
  * お客様の情報・撮影の内容の変更を保存する。どの状態の予約でも直せる（空き判定はしない）。
- * 個人情報のアイテム（PII）の置き換えと履歴（操作は customer-info-change、changedFields は変わった項目の名前だけで、
- * 中身は書かない。INV-10）を、予約の META があることを条件に1トランザクションで書く。日ごとのアイテムは読まない・書かない。
+ * 個人情報のアイテム（PII）の置き換えと、予約の META の更新日時（now）と、履歴（操作は customer-info-change、changedFields は
+ * 変わった項目の名前だけで、中身は書かない。INV-10）を、予約の META があることを条件に1トランザクションで書く。META のほかの属性は変えない。日ごとのアイテムは読まない・書かない。
  * 予約がなければ not-found で何も書かない。変わった項目がなければ何も書かない
  */
 export function saveCustomerInfo(
