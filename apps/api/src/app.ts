@@ -9,6 +9,7 @@ import { createDynamoClient } from "./db/client.ts";
 import type { ReservationStore } from "./db/reservations.ts";
 import { createPublicApplicationRoute } from "./public/applications.ts";
 import { createPublicCalendarRoute } from "./public/calendar.ts";
+import type { MailSettings } from "./mail/settings.ts";
 
 /**
  * 現在時刻（INV-7）。本来は時計の部品（packages/clock）から取るが、まだ中身がないので、
@@ -19,9 +20,14 @@ const now = (): DateTime => DateTime.now();
 
 /**
  * API の本体を組み立てる。読み書きするテーブルは引数で受け取る（テストからは DynamoDB Local のテーブルを渡せる）。
- * adminUserId は管理 API の管理者の id の取り出し方（本番は adminUserIdFromLambdaContext、手元は devAdminUserId）
+ * adminUserId は管理 API の管理者の id の取り出し方（本番は adminUserIdFromLambdaContext、手元は devAdminUserId）。
+ * mail は下書きの文面に差し込む担当者名と署名（admin-api.md「担当者名と署名の設定」）
  */
-export function createApp(store: ReservationStore, adminUserId: AdminUserIdSource): Hono {
+export function createApp(
+  store: ReservationStore,
+  adminUserId: AdminUserIdSource,
+  mail?: MailSettings,
+): Hono {
   const app = new Hono();
 
   // 動作確認用。予約の内容や個人情報は返さない（INV-3）
@@ -37,7 +43,16 @@ export function createApp(store: ReservationStore, adminUserId: AdminUserIdSourc
   );
 
   // 管理 API（管理画面のスタッフだけ）：/admin/…（admin-api.md。管理者の id が取れなければ 401）
-  app.route("/", createAdminRoute({ store, now, priceTable: currentPriceTable(), adminUserId }));
+  app.route(
+    "/",
+    createAdminRoute({
+      store,
+      now,
+      priceTable: currentPriceTable(),
+      adminUserId,
+      ...(mail === undefined ? {} : { mail }),
+    }),
+  );
 
   return app;
 }

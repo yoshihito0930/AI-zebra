@@ -332,6 +332,75 @@ export const AdminCustomerInfoRequest = z.strictObject({
 });
 export type AdminCustomerInfoRequest = z.infer<typeof AdminCustomerInfoRequest>;
 
+/** 下書きの種類（reservation-model.md「状態と操作」、mail.md「下書きのテンプレート」） */
+export const AdminDraftKind = z.enum([
+  "approval",
+  "rejection",
+  "promotion",
+  "second-hold-ended",
+  "cancellation",
+  "move-up-notice",
+  "bring-forward-notice",
+  "change",
+]);
+export type AdminDraftKind = z.infer<typeof AdminDraftKind>;
+
+/** 下書きの状態。送信済み・送らないにしたあとは、未送信に戻さない（mail.md「下書きの送り方」） */
+export const AdminDraftStatus = z.enum(["unsent", "sent", "skipped"]);
+export type AdminDraftStatus = z.infer<typeof AdminDraftStatus>;
+
+/** 未送信の下書きの一覧（3回目。GET /admin/drafts）。作った順（古い順） */
+export const AdminUnsentDraftList = z.strictObject({
+  drafts: z.array(
+    z.strictObject({
+      /** 下書きの id。API が決める文字列で、管理画面はそのまま使う */
+      draftId: z.string().min(1),
+      reservationId: z.string().min(1),
+      kind: AdminDraftKind,
+      createdAt: DateTime,
+      /** あて先の予約の開始 */
+      reservationStart: DateTime,
+      customerName: z.string().min(1),
+    }),
+  ),
+});
+export type AdminUnsentDraftList = z.infer<typeof AdminUnsentDraftList>;
+
+/** 予約の下書きの一覧（3回目。GET /admin/reservations/{id}/drafts）。送信済み・送らないも含め、作った順 */
+export const AdminReservationDraftList = z.strictObject({
+  drafts: z.array(
+    z.strictObject({
+      draftId: z.string().min(1),
+      kind: AdminDraftKind,
+      status: AdminDraftStatus,
+      createdAt: DateTime,
+      /** 送信済み・送らないにした日時。未送信なら持たない */
+      statusChangedAt: DateTime.optional(),
+    }),
+  ),
+});
+export type AdminReservationDraftList = z.infer<typeof AdminReservationDraftList>;
+
+/**
+ * 開いた下書き（3回目。GET /admin/reservations/{id}/drafts/{draftId}）。文面はテンプレートから作り、保存しない（mail.md）
+ * - to：あて先のメールアドレス。予約にメールアドレスがなければ持たない
+ * - text：強調の印を除いた本文。html：強調を色・下線にした本文（Gmail に貼るため）
+ * - attachConsentForm：同意書を Gmail で添付するか（本予約の承認と昇格）
+ */
+export const AdminDraftDetail = z.strictObject({
+  draftId: z.string().min(1),
+  reservationId: z.string().min(1),
+  kind: AdminDraftKind,
+  status: AdminDraftStatus,
+  createdAt: DateTime,
+  to: z.string().min(1).optional(),
+  subject: z.string().min(1),
+  text: z.string().min(1),
+  html: z.string().min(1),
+  attachConsentForm: z.boolean(),
+});
+export type AdminDraftDetail = z.infer<typeof AdminDraftDetail>;
+
 /** ブロック枠を入れる・直す本文（2回目a）。直すときも全部を送る。メモがなければメモはない */
 export const AdminBlockRequest = z.strictObject({
   start: DateTime,
@@ -351,6 +420,7 @@ export type AdminBlockCreated = z.infer<typeof AdminBlockCreated>;
  * - unauthorized：管理者の id が取れない
  * - not-found：予約・ブロック枠・受付番号がない
  * - not-pending／invalid-status／still-held／not-changeable：今の状態ではできない操作
+ * - draft-not-unsent：未送信でない下書きを、送信済み・送らないにしようとした（3回目）
  * - google-calendar-block：Googleカレンダーから取り込んだブロック枠は、直す・消すことができない
  * - unacknowledged-warnings：確認していない警告がある（warnings に今の警告の一覧を付ける）
  * - not-on-30-minute-boundary／shorter-than-2-hours／longer-than-24-hours／overlaps-existing／
@@ -365,6 +435,7 @@ export const AdminError = z.enum([
   "invalid-status",
   "still-held",
   "not-changeable",
+  "draft-not-unsent",
   "google-calendar-block",
   "unacknowledged-warnings",
   "not-on-30-minute-boundary",
