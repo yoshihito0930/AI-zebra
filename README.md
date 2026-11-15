@@ -36,8 +36,12 @@
 | `DYNAMODB_TABLE_NAME` | 読み書きするテーブルの名前。テーブルを使うリクエスト（公開API・管理 API）に必須 |
 | `DYNAMODB_ENDPOINT` | ローカルの DynamoDB の URL（`pnpm db:up` で起動したもの）。省略すると AWS の DynamoDB に接続する |
 | `DEV_ADMIN_USER_ID` | 管理 API（`/admin/…`）を、この id の管理者として動かす（Cognito なしで管理画面を作るため）。履歴の「誰が」になる。ない・空なら、管理 API はどれも 401。架空の id を使う |
+| `MAIL_STAFF_NAME` | お客様へのメールの下書きに差し込む担当者名（例：`架空 担当`）。ない・空なら「（担当者名）」と出す |
+| `MAIL_SIGNATURE` | 下書きの最後の署名。改行は `\n`（バックスラッシュと n の2文字）と書く（例：`スタジオ（架空）\nTEL 000-0000-0000`）。ない・空なら署名を出さない |
 
 `DEV_ADMIN_USER_ID` を読むのは手元の Node サーバー（`apps/api/src/server.ts`）だけ。本番（Lambda）は読まず、API Gateway の JWT オーソライザーが確かめたトークンの `sub` を使う（[docs/design-docs/admin-api.md](docs/design-docs/admin-api.md)「認証」）。
+
+`MAIL_STAFF_NAME`・`MAIL_SIGNATURE` は、手元の Node サーバーと本番（Lambda）の両方が読む（[docs/design-docs/admin-api.md](docs/design-docs/admin-api.md)「担当者名と署名の設定」）。本物の担当者名や電話番号はリポジトリに書かず、本番の値は Lambda の環境変数に入れる。
 
 `pnpm db:up` で起動したローカルの DynamoDB は空なので、最初に `pnpm db:table` でテーブル（キー設計どおり。名前は既定で `zebra-local`）を作る。何度動かしてもよい（もうあれば作らない）。接続先が手元（localhost・127.0.0.1）でなければ作らない。ローカルの DynamoDB はデータをメモリにだけ置くので、`pnpm db:down` のあとはもう一度作る。
 
