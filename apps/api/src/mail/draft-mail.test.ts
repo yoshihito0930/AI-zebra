@@ -192,10 +192,12 @@ const otherProvisionalLines = [
 // ---- テスト ----
 
 describe("下書きのテンプレート", () => {
-  it("本予約 2026/10/20 15:00–17:00 の承認：件名は「【スタジオゼブラ】本予約を承りました」。本文に「【2026年10月20日(火) 15時00分〜17時00分】にて、本予約を承りました。」と「ご予約日時：2026年10月20日(火) 15時00分〜17時00分（2時間）」。「同意書を Gmail で添付する」と表示する", () => {
+  it("本予約 2026/10/20 15:00–17:00 の承認：件名は「2026年10月20日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）」。本文に「【2026年10月20日(火) 15時00分〜17時00分】にて、本予約を承りました。」と「ご予約日時：2026年10月20日(火) 15時00分〜17時00分（2時間）」。「同意書を Gmail で添付する」と表示する", () => {
     for (const [zone, start, end] of bothZones("2026-10-20T15:00", "2026-10-20T17:00")) {
       const mail = render(firmApproval, { start, end });
-      expect(mail.subject, zone).toBe("【スタジオゼブラ】本予約を承りました");
+      expect(mail.subject, zone).toBe(
+        "2026年10月20日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）",
+      );
       expect(lines(mail), zone).toContain(
         "【2026年10月20日(火) 15時00分〜17時00分】にて、本予約を承りました。",
       );
@@ -219,6 +221,27 @@ describe("下書きのテンプレート", () => {
     for (const [zone, start, end] of bothZones("2026-10-20T22:00", "2026-10-21T02:00")) {
       expect(lines(render(firmApproval, { start, end })), zone).toContain(
         "ご予約日時：2026年10月20日(火) 22時00分〜翌2時00分（4時間）",
+      );
+    }
+  });
+
+  it("本予約 2026/10/20 22:00–10/21 02:00 の承認：件名は「2026年10月20日(火) 22時00分〜翌2時00分の本予約を承りました（スタジオゼブラ）」", () => {
+    for (const [zone, start, end] of bothZones("2026-10-20T22:00", "2026-10-21T02:00")) {
+      expect(render(firmApproval, { start, end }).subject, zone).toBe(
+        "2026年10月20日(火) 22時00分〜翌2時00分の本予約を承りました（スタジオゼブラ）",
+      );
+    }
+  });
+
+  // 文面は開いたときの予約の内容で作るので、変えたあとの予約区間を渡す（mail.md「下書きの送り方」）
+  it("本予約 2026/10/20 15:00–17:00 を 10/21 15:00–17:00 に変えた変更：件名は「2026年10月21日(水) 15時00分〜17時00分のご予約の変更を承りました（スタジオゼブラ）」（変えたあとの日時）", () => {
+    for (const [zone, start, end] of bothZones("2026-10-21T15:00", "2026-10-21T17:00")) {
+      const mail = render({ kind: "change" }, { start, end });
+      expect(mail.subject, zone).toBe(
+        "2026年10月21日(水) 15時00分〜17時00分のご予約の変更を承りました（スタジオゼブラ）",
+      );
+      expect(lines(mail), zone).toContain(
+        "ご予約日時：2026年10月21日(水) 15時00分〜17時00分（2時間）",
       );
     }
   });
@@ -364,7 +387,9 @@ describe("下書きのテンプレート", () => {
 
 // ---- 種類ごとの件名と要所（mail.md の種類ごとのテンプレート） ----
 
-const when = "【2026年10月20日(火) 15時00分〜17時00分】";
+/** 本文と件名に入る {予約日時}（10/20 15:00–17:00） */
+const whenText = "2026年10月20日(火) 15時00分〜17時00分";
+const when = `【${whenText}】`;
 
 interface KindCase {
   label: string;
@@ -384,7 +409,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "承認（本予約）",
     draft: firmApproval,
-    subject: "【スタジオゼブラ】本予約を承りました",
+    subject: `${whenText}の本予約を承りました（スタジオゼブラ）`,
     attachConsentForm: true,
     present: [
       "この度はスタジオ利用のお申し込みをありがとうございます。",
@@ -399,7 +424,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "承認（仮予約）",
     draft: provisionalApproval,
-    subject: "【スタジオゼブラ】仮予約を承りました",
+    subject: `${whenText}の仮予約を承りました（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       "この度は仮予約のお申し込みをありがとうございます。",
@@ -414,7 +439,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "承認（第二キープ）",
     draft: { kind: "approval", approvedAs: "second-hold" },
-    subject: "【スタジオゼブラ】第二キープを承りました",
+    subject: `${whenText}の第二キープを承りました（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}にて、第二キープを承りました。`,
@@ -428,7 +453,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "却下",
     draft: { kind: "rejection" },
-    subject: "【スタジオゼブラ】お申し込みについて",
+    subject: `${whenText}のお申し込みについて（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `誠に申し訳ございませんが、${when}のお申し込みは`,
@@ -441,7 +466,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "昇格（仮予約から本予約へ）",
     draft: { kind: "promotion" },
-    subject: "【スタジオゼブラ】本予約を承りました",
+    subject: `${whenText}の本予約を承りました（スタジオゼブラ）`,
     attachConsentForm: true,
     present: [
       "ご利用のご決定のご連絡をありがとうございます。",
@@ -461,7 +486,7 @@ const kindCases: readonly KindCase[] = [
       kind: "cancellation",
       cancellationFee: { ratePercent: 80, fee: Yen.parse(17_600) },
     },
-    subject: "【スタジオゼブラ】ご予約のキャンセルを承りました",
+    subject: `${whenText}のご予約のキャンセルを承りました（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}のご予約のキャンセルを承りました。`,
@@ -475,7 +500,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "変更",
     draft: { kind: "change" },
-    subject: "【スタジオゼブラ】ご予約内容の変更を承りました",
+    subject: `${whenText}のご予約の変更を承りました（スタジオゼブラ）`,
     attachConsentForm: false,
     present: ["ご予約内容の変更を承りました。", "変更後のご予約内容は下記のとおりです。"],
     absent: [],
@@ -485,7 +510,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "第二キープの終了",
     draft: { kind: "second-hold-ended" },
-    subject: "【スタジオゼブラ】第二キープについて",
+    subject: `${whenText}の第二キープについて（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}の第二キープについてご連絡いたします。`,
@@ -499,7 +524,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "繰り上げの案内",
     draft: { kind: "move-up-notice", remainingProvisionalIds: [] },
-    subject: "【スタジオゼブラ】第二キープの繰り上げのご案内",
+    subject: `${whenText}の第二キープの繰り上げのご案内（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}の第二キープについてご連絡いたします。`,
@@ -513,7 +538,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "前倒しの案内",
     draft: { kind: "bring-forward-notice" },
-    subject: "【スタジオゼブラ】ご予約の開始時間について",
+    subject: `${whenText}のご予約の開始時間について（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}のご予約についてご連絡いたします。`,

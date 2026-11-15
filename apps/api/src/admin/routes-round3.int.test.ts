@@ -543,6 +543,9 @@ describe("下書きの送り方", () => {
     );
     expect(lines(detail)).toContain("ご予約日時：2026年10月27日(火) 15時00分〜17時00分（2時間）");
     expect(detail.text).not.toContain("2026年10月20日");
+    expect(detail.subject).toBe(
+      "2026年10月27日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）",
+    );
   });
 });
 
@@ -569,7 +572,9 @@ describe("下書きのテンプレート", () => {
     expect(AdminDraftDetail.safeParse(json).success, JSON.stringify(json)).toBe(true);
     expect(json).not.toHaveProperty("to");
     const detail = AdminDraftDetail.parse(json);
-    expect(detail.subject).toBe("【スタジオゼブラ】本予約を承りました");
+    expect(detail.subject).toBe(
+      "2026年10月20日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）",
+    );
     expect(lines(detail)[0]).toBe(`${formCustomer.name}様`);
   });
 });
@@ -681,7 +686,9 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
     expect(detail.status).toBe("unsent");
     expectInstant(detail.createdAt, preparedAt);
     expect(detail.to).toBe(formCustomer.email);
-    expect(detail.subject).toBe("【スタジオゼブラ】本予約を承りました");
+    expect(detail.subject).toBe(
+      "2026年10月20日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）",
+    );
     expect(detail.attachConsentForm).toBe(true);
     const all = lines(detail);
     expect(all[0]).toBe(`${formCustomer.name}様`);
@@ -741,7 +748,9 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
     const detail = await openDraft(a, draftId);
 
     expect(detail.kind).toBe("cancellation");
-    expect(detail.subject).toBe("【スタジオゼブラ】ご予約のキャンセルを承りました");
+    expect(detail.subject).toBe(
+      "2026年10月20日(火) 15時00分〜17時00分のご予約のキャンセルを承りました（スタジオゼブラ）",
+    );
     expect(detail.attachConsentForm).toBe(false);
     expect(lines(detail)).toContain(
       "【2026年10月20日(火) 15時00分〜17時00分】のご予約のキャンセルを承りました。",
@@ -760,7 +769,9 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
     const notice = await openDraft(k, await draftIdOf(k, "move-up-notice"));
     const cancellation = await openDraft(p1, await draftIdOf(p1, "cancellation"));
 
-    expect(notice.subject).toBe("【スタジオゼブラ】第二キープの繰り上げのご案内");
+    expect(notice.subject).toBe(
+      "2026年10月20日(火) 12時00分〜16時00分の第二キープの繰り上げのご案内（スタジオゼブラ）",
+    );
     expect(lines(notice)).toContain(
       "ただし、ご希望の日時にはほかにも仮予約をいただいているお客様がいらっしゃるため、",
     );
@@ -771,18 +782,20 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
     expect(cancellation.text).not.toContain("お支払い方法につきましては");
   });
 
-  it("仮予約の承認の下書き：件名は「【スタジオゼブラ】仮予約を承りました」、同意書は添付しない、仮予約の期限は利用日の7日前の18時", async () => {
+  it("仮予約の承認の下書き：件名は「2026年10月20日(火) 15時00分〜17時00分の仮予約を承りました（スタジオゼブラ）」、同意書は添付しない、仮予約の期限は利用日の7日前の18時", async () => {
     const p = await applyApproved("provisional", "2026-10-20T15:00", "2026-10-20T17:00");
 
     const detail = await openDraft(p, await draftIdOf(p, "approval"));
 
-    expect(detail.subject).toBe("【スタジオゼブラ】仮予約を承りました");
+    expect(detail.subject).toBe(
+      "2026年10月20日(火) 15時00分〜17時00分の仮予約を承りました（スタジオゼブラ）",
+    );
     expect(detail.attachConsentForm).toBe(false);
     expect(lines(detail)).toContain("【10月13日(火)の18時まで】にご連絡いただけますと幸いです。");
   });
 
   // 承認のテンプレートは、承認したときの状態で選ぶ（mail.md「承認（本予約）」：承認の履歴に残っている「承認したあとの状態」）
-  it("仮予約の申込を承認したあとに昇格し、承認の下書き（未送信）を開く：仮予約の承認の文面（件名「【スタジオゼブラ】仮予約を承りました」）のまま。昇格の下書きは本予約の文面", async () => {
+  it("仮予約の申込を承認したあとに昇格し、承認の下書き（未送信）を開く：仮予約の承認の文面（件名「2026年10月20日(火) 15時00分〜17時00分の仮予約を承りました（スタジオゼブラ）」）のまま。昇格の下書きは本予約の文面", async () => {
     const p = await applyApproved("provisional", "2026-10-20T15:00", "2026-10-20T17:00");
     await prepareOperation({ kind: "promote", reservationId: p }, preparedAt2);
 
@@ -791,7 +804,9 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
 
     expect(approval.kind).toBe("approval");
     expect(approval.status).toBe("unsent");
-    expect(approval.subject).toBe("【スタジオゼブラ】仮予約を承りました");
+    expect(approval.subject).toBe(
+      "2026年10月20日(火) 15時00分〜17時00分の仮予約を承りました（スタジオゼブラ）",
+    );
     expect(approval.attachConsentForm).toBe(false);
     expect(lines(approval)).toContain(
       "【2026年10月20日(火) 15時00分〜17時00分】にて、仮予約を承りました。",
@@ -801,7 +816,9 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
     expect(approval.text).not.toContain("◇ ご予約内容 ◇");
 
     expect(promotion.kind).toBe("promotion");
-    expect(promotion.subject).toBe("【スタジオゼブラ】本予約を承りました");
+    expect(promotion.subject).toBe(
+      "2026年10月20日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）",
+    );
     expect(promotion.attachConsentForm).toBe(true);
     expect(lines(promotion)).toContain("ご利用のご決定のご連絡をありがとうございます。");
     expect(lines(promotion)).toContain(
@@ -815,14 +832,14 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
     [
       "本予約",
       "firm",
-      "【スタジオゼブラ】本予約を承りました",
+      "2026年10月20日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）",
       true,
       "【2026年10月20日(火) 15時00分〜17時00分】にて、本予約を承りました。",
     ],
     [
       "仮予約",
       "provisional",
-      "【スタジオゼブラ】仮予約を承りました",
+      "2026年10月20日(火) 15時00分〜17時00分の仮予約を承りました（スタジオゼブラ）",
       false,
       "【2026年10月20日(火) 15時00分〜17時00分】にて、仮予約を承りました。",
     ],
@@ -840,6 +857,20 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
       expect(lines(approval)).toContain(line);
     },
   );
+
+  it("本予約 10/20 15:00–17:00 を 10/21 15:00–17:00 に変えた変更の下書き：件名と本文の日時は変えたあとの日時。同意書は添付しない", async () => {
+    const a = await prepareA();
+    await prepareOperation(changeOf(a, "2026-10-21T15:00", "2026-10-21T17:00"), preparedAt2);
+
+    const detail = await openDraft(a, await draftIdOf(a, "change"));
+
+    expect(detail.kind).toBe("change");
+    expect(detail.subject).toBe(
+      "2026年10月21日(水) 15時00分〜17時00分のご予約の変更を承りました（スタジオゼブラ）",
+    );
+    expect(detail.attachConsentForm).toBe(false);
+    expect(lines(detail)).toContain("ご予約日時：2026年10月21日(水) 15時00分〜17時00分（2時間）");
+  });
 
   it("開いても何も書かない。下書きは未送信のまま、未送信の一覧に残る", async () => {
     const a = await prepareA();
@@ -1006,7 +1037,7 @@ describe("管理 API：3回目のルートのログに文面や個人情報を�
       bodyMarker,
       staffName,
       ...signatureLines,
-      "【スタジオゼブラ】",
+      "の本予約を承りました（スタジオゼブラ）",
       "お世話になっております",
       "撮影当日に履いていらっしゃった靴のご使用は禁止です。",
       "キャンセル料として",
