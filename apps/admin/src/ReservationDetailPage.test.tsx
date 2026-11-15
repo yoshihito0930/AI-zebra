@@ -1,26 +1,38 @@
 // @vitest-environment jsdom
-import { Yen, type AdminReservationDetail } from "@zebra/contracts";
+import { Yen, type AdminReservationDetail, type AdminReservationDraftList } from "@zebra/contracts";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReservationDetailPage } from "./ReservationDetailPage.tsx";
-import { accepted, detailResponse, fakeApi, type FakeResponse } from "./test-support.ts";
+import {
+  accepted,
+  detailResponse,
+  fakeApi,
+  reservationDraftsResponse,
+  type FakeResponse,
+} from "./test-support.ts";
 
 afterEach(() => {
   cleanup();
 });
 
-/** 詳細を返し、操作には operationResponse を返す API で、詳細の画面を開く */
+/**
+ * 詳細を返し、操作には operationResponse を返す API で、詳細の画面を開く。
+ * 予約の下書きの一覧には drafts（予約の下書きの一覧の URL ごと。省略なら空）を返す
+ */
 const openDetail = async (
   detail: AdminReservationDetail,
   operationResponse: FakeResponse = { status: 200, body: accepted([]) },
   detailAfter: AdminReservationDetail = detail,
+  drafts: (url: string) => AdminReservationDraftList = () => ({ drafts: [] }),
 ) => {
   let operated = false;
-  const fake = fakeApi(({ method }) => {
+  const fake = fakeApi(({ method, url }) => {
     if (method === "POST") {
       operated = true;
       return operationResponse;
     }
+    // 予約の下書きの一覧（詳細の中と、操作の結果の下書きを開くリンク）
+    if (url.endsWith("/drafts")) return { status: 200, body: drafts(url) };
     return { status: 200, body: operated ? detailAfter : detail };
   });
   render(<ReservationDetailPage api={fake.api} reservationId={detail.id} />);
@@ -192,7 +204,7 @@ describe("詳細からの操作", () => {
     expect(posts(calls)).toEqual([
       ["/admin/reservations/res-pending-1/approve", { confirmedPrice: 10_000 }],
     ]);
-    expect(calls.filter((c) => c.method === "GET")).toHaveLength(2);
+    expect(calls.filter((c) => c.url === "/admin/reservations/res-pending-1")).toHaveLength(2);
     expect(screen.getByText("作ったメールの下書きはありません。")).toBeTruthy();
   });
 
@@ -293,5 +305,121 @@ describe("詳細からの操作", () => {
       expect(screen.queryByRole("status", { name: "操作の結果" })).toBeNull();
       cleanup();
     }
+  });
+});
+
+describe("詳細の、メールの下書き", () => {
+  it("その予約の下書きの一覧（送信済み・送らないも）を出し、行から開ける", async () => {
+    const { calls } = await openDetail(
+      detailResponse(),
+      undefined,
+      undefined,
+      reservationDraftsResponse,
+    );
+    const table = await screen.findByRole("table", { name: "この予約のメールの下書き" });
+    expect(calls.map((c) => c.url)).toContain("/admin/reservations/res-pending-1/drafts");
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    expect(within(table).getByText("送信済み")).toBeTruthy();
+    expect(within(table).getByRole("link", { name: "承認のお知らせ" }).getAttribute("href")).toBe(
+      "#/reservations/res-pending-1/drafts/20261030T001500000Z-0001",
+    );
+  });
+
+  it("操作のあと、作った下書きの一覧から下書きを開ける（あて先の予約の、同じ種類のいちばん新しい未送信の下書き）", async () => {
+    let cancelled = false;
+    const fake = fakeApi(({ method, url }) => {
+      if (method === "POST") {
+        cancelled = true;
+        return {
+          status: 200,
+          body: accepted([
+            {
+              kind: "cancellation",
+              reservationId: "res-firm-1",
+              cancellationFee: { ratePercent: 50, fee: Yen.parse(5_500) },
+            },
+            { kind: "bring-forward-notice", reservationId: "res-second-1" },
+          ]),
+        };
+      }
+      if (url === "/admin/reservations/res-firm-1/drafts") {
+        return {
+          status: 200,
+          body: {
+            drafts: cancelled
+              ? [
+                  {
+                    draftId: "20261115T010000000Z-0001",
+                    kind: "cancellation",
+                    status: "unsent",
+                    createdAt: "2026-11-15T10:00:00.000+09:00",
+                  },
+                ]
+              : [],
+          },
+        };
+      }
+      if (url === "/admin/reservations/res-second-1/drafts") {
+        return {
+          status: 200,
+          body: {
+            drafts: [
+              {
+                draftId: "20261101T000000000Z-0001",
+                kind: "bring-forward-notice",
+                status: "sent",
+                createdAt: "2026-11-01T09:00:00.000+09:00",
+                statusChangedAt: "2026-11-01T09:30:00.000+09:00",
+              },
+              {
+                draftId: "20261115T010000000Z-0002",
+                kind: "bring-forward-notice",
+                status: "unsent",
+                createdAt: "2026-11-15T10:00:00.000+09:00",
+              },
+            ],
+          },
+        };
+      }
+      return {
+        status: 200,
+        body: cancelled ? detailResponse({ ...firm(), status: "cancelled" }) : firm(),
+      };
+    });
+    render(<ReservationDetailPage api={fake.api} reservationId="res-firm-1" />);
+    await screen.findByText("この予約のメールの下書きはありません。");
+
+    fireEvent.click(screen.getByRole("button", { name: "取消…" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消する" }));
+    const result = await screen.findByRole("status", { name: "操作の結果" });
+    const openLinks = await within(result).findAllByRole("link", { name: "下書きを開く" });
+    expect(openLinks.map((a) => a.getAttribute("href"))).toEqual([
+      "#/reservations/res-firm-1/drafts/20261115T010000000Z-0001",
+      "#/reservations/res-second-1/drafts/20261115T010000000Z-0002",
+    ]);
+    // 詳細の中の下書きの一覧も読み直す
+    const table = await screen.findByRole("table", { name: "この予約のメールの下書き" });
+    expect(within(table).getByText("取消のお知らせ")).toBeTruthy();
+  });
+
+  it("下書きを当てられなければ、開くリンクを出さない（一覧はそのまま出す）", async () => {
+    const { calls } = await openDetail(detailResponse(), {
+      status: 200,
+      body: accepted([{ kind: "rejection", reservationId: "res-pending-1" }]),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "却下…" }));
+    fireEvent.click(screen.getByRole("button", { name: "却下する" }));
+    const result = await screen.findByRole("status", { name: "操作の結果" });
+    // 詳細の中の一覧（初めと操作のあと）と、下書きを当てるための読み込みが終わるまで待つ
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.url.endsWith("/drafts")).length).toBeGreaterThanOrEqual(3),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      within(result)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["却下のお知らせ、あて先の予約：この予約"]);
+    expect(within(result).queryByRole("link", { name: "下書きを開く" })).toBeNull();
   });
 });

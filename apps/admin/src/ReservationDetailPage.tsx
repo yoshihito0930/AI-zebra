@@ -1,8 +1,10 @@
 // 予約の詳細（GET /admin/reservations/{id}）。予約の内容、お客様の情報、履歴、承認待ちなら今の見積、取消できるなら今のキャンセル料。
-// 下に、今の状態でできる操作（OperationPanel）と、直す（予約の変更・バッファの切り替え・お客様の情報。ReservationEditPanel）を出す
+// 下に、その予約のメールの下書きの一覧（ReservationDraftList）、今の状態でできる操作（OperationPanel）と、
+// 直す（予約の変更・バッファの切り替え・お客様の情報。ReservationEditPanel）を出す
 import type { AdminOperationAccepted, AdminReservationDetail } from "@zebra/contracts";
 import { useCallback, useEffect, useState } from "react";
 import type { AdminApi, AdminOperation } from "./api.ts";
+import { ReservationDraftList } from "./DraftLists.tsx";
 import { formatDateTime, formatTimeRange, formatYen } from "./format.ts";
 import {
   customerFieldLabel,
@@ -23,9 +25,16 @@ type LoadState =
   | { kind: "loaded"; detail: AdminReservationDetail }
   | { kind: "failed"; message: string };
 
-export function ReservationDetailPage(props: { api: AdminApi; reservationId: string }) {
-  const { api, reservationId } = props;
+export function ReservationDetailPage(props: {
+  api: AdminApi;
+  reservationId: string;
+  /** 操作・変更が成功したとき（下書きができたかもしれないので、未送信の件数を読み直す） */
+  onDraftsChanged?: () => void;
+}) {
+  const { api, reservationId, onDraftsChanged } = props;
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  /** 操作・変更のたびに増やし、下書きの一覧を読み直す */
+  const [revision, setRevision] = useState(0);
   const [lastResult, setLastResult] = useState<{
     message: string;
     accepted?: AdminOperationAccepted | undefined;
@@ -52,6 +61,8 @@ export function ReservationDetailPage(props: { api: AdminApi; reservationId: str
 
   const onEdited = async (message: string, accepted?: AdminOperationAccepted) => {
     setLastResult({ message, accepted });
+    setRevision((r) => r + 1);
+    onDraftsChanged?.();
     setState(await load());
   };
   const onSucceeded = (operation: AdminOperation, accepted: AdminOperationAccepted) =>
@@ -65,6 +76,7 @@ export function ReservationDetailPage(props: { api: AdminApi; reservationId: str
       <h2>予約の詳細</h2>
       {lastResult !== undefined && (
         <OperationResult
+          api={api}
           message={lastResult.message}
           accepted={lastResult.accepted}
           reservationId={reservationId}
@@ -75,6 +87,7 @@ export function ReservationDetailPage(props: { api: AdminApi; reservationId: str
       {state.kind === "loaded" && (
         <>
           <ReservationDetailView detail={state.detail} />
+          <ReservationDraftList api={api} reservationId={state.detail.id} refreshKey={revision} />
           <OperationPanel
             key={state.detail.id}
             api={api}

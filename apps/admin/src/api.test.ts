@@ -1,7 +1,15 @@
 import { Yen } from "@zebra/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createAdminApi } from "./api.ts";
-import { accepted, detailResponse, fakeApi, listResponse } from "./test-support.ts";
+import {
+  accepted,
+  detailResponse,
+  draftDetailResponse,
+  fakeApi,
+  listResponse,
+  reservationDraftsResponse,
+  unsentDraftsResponse,
+} from "./test-support.ts";
 
 describe("管理 API の呼び出し", () => {
   it("一覧：期間と状態をクエリで渡し、返事を契約でパースして返す", async () => {
@@ -219,5 +227,70 @@ describe("管理 API の呼び出し", () => {
       value: { reservationId: "res-1" },
     });
     expect(calls[0]?.url).toBe("/admin/receipts/ABCD2345");
+  });
+
+  it("未送信の下書きの一覧：/admin/drafts を読み、契約でパースして返す", async () => {
+    const { api, calls } = fakeApi(() => ({ status: 200, body: unsentDraftsResponse() }));
+    expect(await api.listUnsentDrafts()).toEqual({ ok: true, value: unsentDraftsResponse() });
+    expect(calls).toEqual([{ method: "GET", url: "/admin/drafts", body: undefined }]);
+  });
+
+  it("予約の下書きの一覧：予約の id をパスに入れて読む", async () => {
+    const { api, calls } = fakeApi(() => ({ status: 200, body: reservationDraftsResponse() }));
+    expect(await api.listReservationDrafts("res/1")).toEqual({
+      ok: true,
+      value: reservationDraftsResponse(),
+    });
+    expect(calls[0]?.url).toBe("/admin/reservations/res%2F1/drafts");
+  });
+
+  it("下書きを開く：予約の id と下書きの id をパスに入れて読む", async () => {
+    const { api, calls } = fakeApi(() => ({ status: 200, body: draftDetailResponse() }));
+    expect(await api.getDraft("res-pending-1", "20261030T001500000Z-0001")).toEqual({
+      ok: true,
+      value: draftDetailResponse(),
+    });
+    expect(calls).toEqual([
+      {
+        method: "GET",
+        url: "/admin/reservations/res-pending-1/drafts/20261030T001500000Z-0001",
+        body: undefined,
+      },
+    ]);
+  });
+
+  it("下書きを開く：返事が契約の形でなければ（知らない種類など）、使わずに「思わぬ返事」にする（INV-4）", async () => {
+    const { api } = fakeApi(() => ({
+      status: 200,
+      body: { ...draftDetailResponse(), kind: "invoice" },
+    }));
+    expect(await api.getDraft("res-pending-1", "d-1")).toEqual({
+      ok: false,
+      failure: { kind: "unexpected", status: 200 },
+    });
+  });
+
+  it("送信済みにする・送らないにする：空の本文で sent・skip に POST する。成功は本文なしの 200", async () => {
+    const { api, calls } = fakeApi(() => ({ status: 200 }));
+    expect(await api.setDraftStatus("res-1", "d/1", "sent")).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(await api.setDraftStatus("res-1", "d/1", "skip")).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(calls).toEqual([
+      { method: "POST", url: "/admin/reservations/res-1/drafts/d%2F1/sent", body: {} },
+      { method: "POST", url: "/admin/reservations/res-1/drafts/d%2F1/skip", body: {} },
+    ]);
+  });
+
+  it("送信済みにする：未送信でない下書きの 409 は、理由（draft-not-unsent）を取り出す", async () => {
+    const { api } = fakeApi(() => ({ status: 409, body: { error: "draft-not-unsent" } }));
+    expect(await api.setDraftStatus("res-1", "d-1", "sent")).toEqual({
+      ok: false,
+      failure: { kind: "rejected", status: 409, error: "draft-not-unsent" },
+    });
   });
 });
