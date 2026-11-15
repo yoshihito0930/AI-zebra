@@ -164,6 +164,23 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足したもの：なし。テストは仕様の環境変数の名前から書けたので、中身に影響はなかった
 - 次への改善：テストに要る型は、準備の PR で packages/contracts に置くか、フックで「型の宣言だけのファイル」（test-tamper のスタブの判定と同じ形）を読めるようにするかを決める
 
+### 2026-11-15 管理画面の部品のテストを、ルートの Vitest の設定が拾わなかった
+- 起きたこと：管理画面の最初の形（一覧・詳細・操作・受付番号から探す）を作った。React の部品のテストは `*.test.tsx` になるが、ルートの vitest.config.ts の対象は `*.test.ts` だけで、DOM のある環境（jsdom）の設定もなかった。ほかに、撮影内容（`ShootingType`）は契約にスキーマだけがあって型の export がなく、画面の呼び名の表では値を書き並べた。packages/clock はまだ中身がないので、管理画面の現在時刻は apps/api と同じく入口（main.tsx）の1か所で Luxon から取り、部品には関数として渡した
+- 足りなかったもの：ツール（画面の部品のテストの置き場所と動かし方）
+- 足したもの：vitest.config.ts の対象を `*.test.{ts,tsx}` に広げた。DOM の要るテストは、ファイルの先頭の `// @vitest-environment jsdom` で jsdom で動かす。apps/admin の devDependencies に Testing Library と jsdom を足した。test-tamper と spec-coverage は、もとから `.tsx` のテストも数える
+- 次への改善：画面のテストが増えたら、apps ごとの Vitest の projects に分けるかを考える（今はファイルごとの指定で足りる）。packages/clock に中身を入れるときは、apps/api の app.ts と apps/admin の main.tsx の2か所を置き換える
+
+### 2026-11-15 デモのデータを入れるスクリプトで、「本番と同じ流れ」の入口が層ごとに違った
+- 起きたこと：管理画面を手元で触るためのデモのデータのスクリプト（`pnpm db:demo`）を作った。保存の層（apps/api/src/db）の関数を呼んで入れる方針だったが、フォームの申込の保存（`saveApplication`）は締め切り・見積・受付番号を扱わず、それらは公開 API の層（`submitApplication`）にある。直接入力の見積とプランの決め方は、管理 API のルート（routes.ts）の中に書かれていて、関数として取り出せない。テーブルが空か（2回目の動き）を確かめる関数も保存の層にない
+- 足りなかったもの：ツール（「API の検証から保存まで」を、HTTP を通さずに呼べる入口が、申込にはあるが直接入力にはない）
+- 足したもの：フォームの申込は `submitApplication` を呼び、直接入力は管理 API のルートと同じ組み立て（`checkAdminDuration` → `decidePlanId` → `calculatePriceFromTable` → `saveDirectEntry`）をスクリプトに書いた。テーブルが空かは、ScanCommand（読むだけ）で確かめる。apps/api/src は変えていない
+- 次への改善：管理 API のルートで直接入力の組み立てが変わると、スクリプトの組み立てとずれる（統合テストは入ることだけを確かめる）。ずれが問題になったら、管理 API の層に「直接入力の検証から保存まで」の関数（`submitApplication` に当たるもの）を取り出し、ルートとスクリプトの両方から呼ぶ
+
+### 2026-11-15 手元の lint が、ほかのエージェントの作業ツリーのファイルで落ちた
+- 起きたこと：エージェントを worktree で並行に動かしたとき、メインの作業ツリーで動かした `pnpm lint` が、`.claude/worktrees/` の下にある別のエージェントの作業中のファイル（管理画面の部品）で落ちた。そのブランチのファイルではないので、直すことができなかった
+- 足りなかったもの：lint（eslint の flat config は .gitignore を読まないので、gitignore に入れた `.claude/worktrees/` も対象になっていた）
+- 足したもの：共通の eslint の設定（tooling/eslint-config）の ignores に `.claude/worktrees/**` を足した。Vitest・spec-coverage は対象のフォルダー（apps・packages・tooling・scripts）を絞っているので、もともと読まない。prettier は .gitignore を読む
+- 次への改善：ルートから全体を見るツールを足すときは、`.claude/worktrees/` を読まないことを確かめる
 
 ### 2026-11-15 ほかのエージェントの作業ツリーがあると、手元の pnpm check と pnpm test:int が落ちる
 - 起きたこと：管理 API の3回目の実装の PR で、手元の `pnpm check` が `pnpm deps`（dependency-cruiser）で 165 件の違反を出して止まった。違反はどれも `.claude/worktrees/`（ほかのエージェントの作業ツリー。git では無視している）の中のファイルで、そこには node_modules がないので import を解決できない（not-to-unresolvable）。自分のブランチのファイルの違反は 0 件だった。lint・format・typecheck・test・spec-coverage は1つずつ動かして通した。また、`pnpm test:int` を全部動かすと、触っていない統合テスト（公開API の予約状況、2回目b のルートなど）が 15 秒のタイムアウトで 8 件落ちた。そのとき、ほかの作業ツリーでもテストが動いていて、1つのローカルの DynamoDB（`-sharedDb`）を一緒に使っていた。落ちたテストは、1つずつ動かすと 1 秒ほどで通った
