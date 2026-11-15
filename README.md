@@ -47,6 +47,15 @@ pnpm db:table
 DEV_ADMIN_USER_ID=dev-admin DYNAMODB_TABLE_NAME=zebra-local DYNAMODB_ENDPOINT=http://localhost:8000 pnpm dev:api
 ```
 
+## 管理画面を手元で開く
+
+管理画面（apps/admin）は、手元の API に Vite の dev サーバーの中継（`/admin` → http://localhost:8787）でつなぐ。ログイン（Cognito）はまだなく、API の `DEV_ADMIN_USER_ID` の管理者として動く。
+
+1. 上の手順で API を起動する（`pnpm db:up` → `pnpm db:table` → `DEV_ADMIN_USER_ID=dev-admin … pnpm dev:api`）
+2. 別のターミナルで `pnpm dev:admin` を動かし、http://localhost:5174/ を開く
+
+予約の一覧（期間・状態で絞る）、予約の詳細、承認・却下・昇格・取消・繰り上げ、受付番号から探す、ができる。テーブルが空なら、公開API（`POST /public/applications`）で架空の申込を入れるか、管理 API（`POST /admin/blocks`）でブロック枠を入れる。メールの下書きを開く画面は、まだない。
+
 ## 変更の流れ
 
 main は保護されている。ブランチを切って PR を出し、CI（`lint`・`typecheck`・`deps`・`test`・`test-int`・`spec-coverage`・`test-tamper`・`expected-failures`）が通ってからマージする。
