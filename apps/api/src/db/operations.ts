@@ -33,7 +33,7 @@ import {
   occupiedRange,
   rejectReservation,
 } from "@zebra/booking-core";
-import type { PriceTable, Yen } from "@zebra/contracts";
+import type { AdminDraftStatus, PriceTable, Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
 import {
   DEFAULT_MAX_ATTEMPTS,
@@ -142,8 +142,8 @@ export type OperationDraft =
   | { readonly kind: "bring-forward-notice"; readonly reservationId: string }
   | { readonly kind: "change"; readonly reservationId: string };
 
-/** 下書きの状態：未送信／送信済み／送らない */
-export type DraftStatus = "unsent" | "sent" | "not-sent";
+/** 下書きの状態：未送信／送信済み／送らない（契約の AdminDraftStatus と同じ。drafts.ts が送信済み・送らないにする） */
+export type DraftStatus = AdminDraftStatus;
 
 /** 操作と同じトランザクションで書いた下書き */
 export interface SavedDraft {

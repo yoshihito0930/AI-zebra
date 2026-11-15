@@ -15,7 +15,7 @@ import {
   type Item,
   type ReservationMeta,
   type ReservationStore,
-  batchGet,
+  batchGetAll,
   malformed,
   parseReservationMeta,
   readOccupiedIntervals,
@@ -153,9 +153,6 @@ export async function listAdminReservationsByStatus(
 /** 状態の GSI の名前（dynamodb-keys.md「読み出し」の gsi1pk・gsi1sk） */
 const STATUS_INDEX_NAME = "gsi1";
 
-/** BatchGetItem で1回に読めるキーの数 */
-const BATCH_GET_LIMIT = 100;
-
 /** 枠を確保している状態の予約の META */
 type HoldingMeta = ReservationMeta & { readonly status: HoldingReservationStatus };
 
@@ -168,7 +165,7 @@ function isHoldingMeta(meta: ReservationMeta): meta is HoldingMeta {
   return isHoldingStatus(meta.status);
 }
 
-function reservationMetaKey(id: string): Item {
+export function reservationMetaKey(id: string): Item {
   return { pk: { S: `RES#${id}` }, sk: { S: "META" } };
 }
 
@@ -180,29 +177,18 @@ function keyOf(item: Item): string {
   return `${item["pk"]?.S ?? ""} ${item["sk"]?.S ?? ""}`;
 }
 
-/** BATCH_GET_LIMIT 件ずつに分けて BatchGet する */
-async function batchGetAll(
+/**
+ * 予約の PII のアイテムから、氏名（customer.name）だけを読む（ProjectionExpression。ほかの欄は読まない）。
+ * 予約の id から氏名へ。PII のアイテムがない予約は入らない。下書きの一覧（drafts.ts）でも使う
+ */
+export async function readCustomerNames(
   store: ReservationStore,
-  keys: Item[],
-  projection?: Parameters<typeof batchGet>[2],
-): Promise<Item[]> {
-  const items: Item[] = [];
-  for (let i = 0; i < keys.length; i += BATCH_GET_LIMIT) {
-    items.push(...(await batchGet(store, keys.slice(i, i + BATCH_GET_LIMIT), projection)));
-  }
-  return items;
-}
-
-/** 予約の PII のアイテムから、氏名（customer.name）だけを読んで付ける。ほかの欄は読まない */
-async function withCustomerNames(
-  store: ReservationStore,
-  metas: readonly HoldingMeta[],
-): Promise<AdminListedReservation[]> {
-  const piiItems = await batchGetAll(
-    store,
-    metas.map((meta) => piiKey(meta.id)),
-    { expression: "pk, sk, customer.#name", names: { "#name": "name" } },
-  );
+  reservationIds: readonly string[],
+): Promise<Map<string, string>> {
+  const piiItems = await batchGetAll(store, reservationIds.map(piiKey), {
+    expression: "pk, sk, customer.#name",
+    names: { "#name": "name" },
+  });
   const names = new Map<string, string>();
   for (const item of piiItems) {
     const pk = readString(item, "pk", "PII のアイテム");
@@ -211,6 +197,18 @@ async function withCustomerNames(
     if (customer === undefined) throw malformed(where, "customer");
     names.set(pk.slice("RES#".length), readString(customer, "name", where));
   }
+  return names;
+}
+
+/** 予約の PII のアイテムから、氏名（customer.name）だけを読んで付ける。ほかの欄は読まない */
+async function withCustomerNames(
+  store: ReservationStore,
+  metas: readonly HoldingMeta[],
+): Promise<AdminListedReservation[]> {
+  const names = await readCustomerNames(
+    store,
+    metas.map((meta) => meta.id),
+  );
   return metas.map((meta) => {
     const customerName = names.get(meta.id);
     if (customerName === undefined) throw malformed(`RES#${meta.id}`, "PII のアイテム");
