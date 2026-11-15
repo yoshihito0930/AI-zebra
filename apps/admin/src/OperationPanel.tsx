@@ -1,14 +1,13 @@
 // 詳細からの操作（POST /admin/reservations/{id}/{approve|reject|promote|cancel|move-up}）と、その結果（作った下書きの一覧）。
 // 出す操作は、今の状態でできるもの（reservation-model.md「状態と操作」）。判定は API が行い、できなければ理由を日本語で出す
-import {
-  Yen,
-  type AdminOperationAccepted,
-  type AdminReservationDetail,
-  type ReservationStatus,
+import type {
+  AdminOperationAccepted,
+  AdminReservationDetail,
+  ReservationStatus,
 } from "@zebra/contracts";
 import { useState, type FormEvent } from "react";
 import type { AdminApi, AdminOperation, ApiResult } from "./api.ts";
-import { formatYen } from "./format.ts";
+import { formatYen, parseYenInput } from "./format.ts";
 import { draftKindLabel, failureMessage } from "./labels.ts";
 import { detailHref } from "./route.ts";
 
@@ -31,14 +30,6 @@ export const operationsByStatus: Record<ReservationStatus, readonly AdminOperati
   cancelled: [],
   ended: [],
 };
-
-/** 確定金額の入力（0以上の整数の円。INV-9）。整数でなければ undefined */
-export function parseYenInput(text: string): Yen | undefined {
-  const trimmed = text.trim();
-  if (!/^\d+$/.test(trimmed)) return undefined;
-  const parsed = Yen.safeParse(Number(trimmed));
-  return parsed.success ? parsed.data : undefined;
-}
 
 type Confirming = "reject" | "cancel" | undefined;
 
@@ -207,17 +198,20 @@ function draftValues(draft: Draft): string | undefined {
   }
 }
 
-/** 操作が成功したときの表示：作った下書きの一覧。下書きを開いて Gmail から送る画面は次の更新で作る */
+/**
+ * 操作・変更が成功したときの表示：結果の文と、作った下書きの一覧（下書きを作らない操作では accepted を渡さない）。
+ * 下書きを開いて Gmail から送る画面は次の更新で作る
+ */
 export function OperationResult(props: {
-  operation: AdminOperation;
-  accepted: AdminOperationAccepted;
+  message: string;
+  accepted?: AdminOperationAccepted | undefined;
   reservationId: string;
 }) {
-  const { operation, accepted, reservationId } = props;
+  const { message, accepted, reservationId } = props;
   return (
     <section role="status" aria-label="操作の結果">
-      <p>{operationLabel[operation]}しました。</p>
-      {accepted.drafts.length === 0 ? (
+      <p>{message}</p>
+      {accepted === undefined ? null : accepted.drafts.length === 0 ? (
         <p>作ったメールの下書きはありません。</p>
       ) : (
         <>
