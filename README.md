@@ -145,5 +145,5 @@ HP（apps/site-zebra）の予約ページ（`/reservation/`）には、予約ウ
 
 ## 変更の流れ
 
-main は保護されている。ブランチを切って PR を出し、CI（`lint`・`typecheck`・`deps`・`test`・`test-int`・`spec-coverage`・`test-tamper`・`expected-failures`）が通ってからマージする。
+main は保護されている。ブランチを切って PR を出し、CI（`lint`・`typecheck`・`build`・`deps`・`test`・`test-int`・`spec-coverage`・`test-tamper`・`expected-failures`）が通ってからマージする。
 テストと実装の進め方は [docs/TESTING.md](docs/TESTING.md)。
