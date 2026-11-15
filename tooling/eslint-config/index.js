@@ -76,7 +76,15 @@ const noExtensionlessRelativeImport = [
 
 export default tseslint.config(
   {
-    ignores: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.astro/**"],
+    // .claude/worktrees：エージェントの作業ツリー（Agent の isolation: "worktree"）。別のブランチのファイルなので、
+    // ここの lint に入れない（ほかのエージェントの作業中のファイルで、手元の lint が落ちないようにする）
+    ignores: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/coverage/**",
+      "**/.astro/**",
+      ".claude/worktrees/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
