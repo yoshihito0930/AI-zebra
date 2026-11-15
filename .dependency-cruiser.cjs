@@ -92,7 +92,8 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: "node_modules" },
-    exclude: { path: "(^|/)(dist|coverage|[.]astro)/" },
+    // ^[.]claude/worktrees/：エージェントの作業ツリー（別のブランチのファイル。eslint の設定と同じ理由で読まない）
+    exclude: { path: "(^|/)(dist|coverage|[.]astro)/|^[.]claude/worktrees/" },
     tsPreCompilationDeps: true,
     enhancedResolveOptions: {
       exportsFields: ["exports"],
