@@ -3,18 +3,30 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { DateTime } from "luxon";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.tsx";
-import { detailResponse, fakeApi, listResponse, type FakeResponse } from "./test-support.ts";
+import {
+  detailResponse,
+  draftDetailResponse,
+  fakeApi,
+  fakeClipboard,
+  listResponse,
+  unsentDraftsResponse,
+  type FakeResponse,
+} from "./test-support.ts";
 
 // 今は 2026-11-15（JST）。一覧の期間の初期値は 2026-11-01〜2026-11-30
 const now = () => DateTime.fromISO("2026-11-15T10:00:00+09:00");
 
 const renderApp = (handler: Parameters<typeof fakeApi>[0]) => {
   const fake = fakeApi(handler);
-  render(<App api={fake.api} now={now} />);
+  render(<App api={fake.api} now={now} copier={fakeClipboard().copier} />);
   return fake;
 };
 
 const okList = (): FakeResponse => ({ status: 200, body: listResponse() });
+
+/** 予約の一覧を読んだ呼び出し（ヘッダーの未送信の件数の呼び出しを除く） */
+const listCalls = (calls: { url: string }[]) =>
+  calls.filter((c) => c.url.startsWith("/admin/reservations?"));
 
 beforeEach(() => {
   window.location.hash = "";
@@ -35,7 +47,7 @@ describe("予約の一覧", () => {
   it("初めは今月（JST）の期間で読み、予約とブロック枠を開始の早い順に表にする", async () => {
     const { calls } = renderApp(okList);
     await screen.findByText("架空 太郎");
-    expect(calls[0]?.url).toBe("/admin/reservations?from=2026-11-01&to=2026-11-30");
+    expect(listCalls(calls)[0]?.url).toBe("/admin/reservations?from=2026-11-01&to=2026-11-30");
 
     const rows = within(screen.getByRole("table")).getAllByRole("row").slice(1);
     expect(rows.map((row) => row.textContent)).toEqual([
@@ -69,7 +81,7 @@ describe("予約の一覧", () => {
     fireEvent.click(screen.getByRole("button", { name: "表示" }));
 
     await screen.findByText("該当する予約・ブロック枠はありません。");
-    expect(calls.at(-1)?.url).toBe(
+    expect(listCalls(calls).at(-1)?.url).toBe(
       "/admin/reservations?from=2026-12-01&to=2026-12-31&status=provisional",
     );
   });
@@ -81,7 +93,7 @@ describe("予約の一覧", () => {
     fireEvent.click(screen.getByRole("button", { name: "承認待ちをすべて見る" }));
     await screen.findByText("該当する予約・ブロック枠はありません。");
     expect(
-      calls
+      listCalls(calls)
         .slice(1)
         .map((c) => c.url)
         .sort(),
@@ -133,5 +145,73 @@ describe("受付番号から探す", () => {
     fireEvent.click(screen.getByRole("button", { name: "開く" }));
     expect((await screen.findByRole("alert")).textContent).toContain("受付番号は8文字の英数字です");
     expect(calls.filter((c) => c.url.startsWith("/admin/receipts/"))).toEqual([]);
+  });
+});
+
+describe("メールの下書き", () => {
+  /** 未送信の下書きの一覧と、下書きを開く・送信済みにする API。送信済みにした下書きは未送信の一覧から消える */
+  const draftsApi = () => {
+    const sent = new Set<string>();
+    return renderApp(({ method, url }) => {
+      if (url === "/admin/drafts") {
+        const all = unsentDraftsResponse().drafts;
+        return { status: 200, body: { drafts: all.filter((d) => !sent.has(d.draftId)) } };
+      }
+      const action = /^\/admin\/reservations\/[^/]+\/drafts\/([^/]+)\/sent$/.exec(url);
+      if (method === "POST" && action?.[1] !== undefined) {
+        sent.add(action[1]);
+        return { status: 200 };
+      }
+      if (url === "/admin/reservations/res-pending-1/drafts/20261030T001500000Z-0001") {
+        return {
+          status: 200,
+          body: draftDetailResponse({
+            status: sent.has("20261030T001500000Z-0001") ? "sent" : "unsent",
+          }),
+        };
+      }
+      return okList();
+    });
+  };
+
+  it("ヘッダーに、未送信の下書きの一覧へのリンクと件数を出す", async () => {
+    const { calls } = draftsApi();
+    const link = await screen.findByRole("link", { name: "未送信のメールの下書き（2件）" });
+    expect(link.getAttribute("href")).toBe("#/drafts");
+    expect(calls.map((c) => c.url)).toContain("/admin/drafts");
+  });
+
+  it("未送信の一覧から下書きを開き、送信済みにすると、一覧から消えて件数が減る", async () => {
+    draftsApi();
+    await screen.findByText("架空 太郎");
+    window.location.hash = "#/drafts";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    const table = await screen.findByRole("table", { name: "未送信の下書き" });
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+
+    fireEvent.click(
+      within(table).getByRole("link", { name: "承認のお知らせ" }).closest("tr") as HTMLElement,
+    );
+    expect(window.location.hash).toBe(
+      "#/reservations/res-pending-1/drafts/20261030T001500000Z-0001",
+    );
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await screen.findByRole("heading", { name: "メールの下書き" });
+    await screen.findByRole("document", { name: "本文" });
+
+    fireEvent.click(screen.getByRole("button", { name: "送信済みにする…" }));
+    fireEvent.click(screen.getByRole("button", { name: "送信済みにする" }));
+    await screen.findByText("送信済みにしました。未送信の一覧から消えました。");
+    await screen.findByRole("link", { name: "未送信のメールの下書き（1件）" });
+
+    expect(
+      screen.getByRole("link", { name: "← 未送信の下書きの一覧へ" }).getAttribute("href"),
+    ).toBe("#/drafts");
+    window.location.hash = "#/drafts";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    const after = await screen.findByRole("table", { name: "未送信の下書き" });
+    expect(within(after).getAllByRole("row")).toHaveLength(2);
+    expect(within(after).queryByText("承認のお知らせ")).toBeNull();
+    expect(within(after).getByText("取消のお知らせ")).toBeTruthy();
   });
 });

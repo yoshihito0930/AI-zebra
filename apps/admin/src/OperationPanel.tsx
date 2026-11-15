@@ -1,15 +1,16 @@
-// 詳細からの操作（POST /admin/reservations/{id}/{approve|reject|promote|cancel|move-up}）と、その結果（作った下書きの一覧）。
+// 詳細からの操作（POST /admin/reservations/{id}/{approve|reject|promote|cancel|move-up}）と、その結果（作った下書きの一覧と、下書きを開くリンク）。
 // 出す操作は、今の状態でできるもの（reservation-model.md「状態と操作」）。判定は API が行い、できなければ理由を日本語で出す
 import type {
   AdminOperationAccepted,
   AdminReservationDetail,
   ReservationStatus,
 } from "@zebra/contracts";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { AdminApi, AdminOperation, ApiResult } from "./api.ts";
 import { formatYen, parseYenInput } from "./format.ts";
 import { draftKindLabel, failureMessage } from "./labels.ts";
-import { detailHref } from "./route.ts";
+import { findOperationDraftIds } from "./drafts.ts";
+import { detailHref, draftHref } from "./route.ts";
 
 export const operationLabel: Record<AdminOperation, string> = {
   approve: "承認",
@@ -200,14 +201,29 @@ function draftValues(draft: Draft): string | undefined {
 
 /**
  * 操作・変更が成功したときの表示：結果の文と、作った下書きの一覧（下書きを作らない操作では accepted を渡さない）。
- * 下書きを開いて Gmail から送る画面は次の更新で作る
+ * 操作の返事の下書きは id を持たないので、あて先の予約の下書きの一覧から当てて、下書きを開くリンクを出す（drafts.ts）
  */
 export function OperationResult(props: {
+  api: AdminApi;
   message: string;
   accepted?: AdminOperationAccepted | undefined;
   reservationId: string;
 }) {
-  const { message, accepted, reservationId } = props;
+  const { api, message, accepted, reservationId } = props;
+  const [draftIds, setDraftIds] = useState<(string | undefined)[]>();
+
+  useEffect(() => {
+    let current = true;
+    setDraftIds(undefined);
+    if (accepted === undefined || accepted.drafts.length === 0) return;
+    void findOperationDraftIds(api, accepted.drafts).then((ids) => {
+      if (current) setDraftIds(ids);
+    });
+    return () => {
+      current = false;
+    };
+  }, [api, accepted]);
+
   return (
     <section role="status" aria-label="操作の結果">
       <p>{message}</p>
@@ -219,6 +235,7 @@ export function OperationResult(props: {
           <ul>
             {accepted.drafts.map((draft, i) => {
               const values = draftValues(draft);
+              const draftId = draftIds?.[i];
               return (
                 <li key={i}>
                   {draftKindLabel[draft.kind]}、あて先の予約：
@@ -228,13 +245,20 @@ export function OperationResult(props: {
                     <a href={detailHref(draft.reservationId)}>{draft.reservationId}</a>
                   )}
                   {values !== undefined && `、${values}`}
+                  {draftId !== undefined && (
+                    <>
+                      {" "}
+                      <a href={draftHref(draft.reservationId, draftId)}>下書きを開く</a>
+                    </>
+                  )}
                 </li>
               );
             })}
           </ul>
           <p>
             <small>
-              下書きを開いて Gmail から送る画面は、まだありません（次の更新で作ります）。
+              下書きを開いて内容を確かめ、Gmail
+              に貼って送ってください（管理画面からは送りません）。送ったら、下書きの画面で「送信済み」にします。
             </small>
           </p>
         </>

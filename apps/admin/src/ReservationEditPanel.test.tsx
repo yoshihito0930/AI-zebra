@@ -21,13 +21,15 @@ const openDetail = async (
   detailAfter: AdminReservationDetail = detail,
 ) => {
   let writes = 0;
-  const fake = fakeApi(({ method }) => {
+  const fake = fakeApi(({ method, url }) => {
     if (method !== "GET") {
       const response = responses[Math.min(writes, responses.length - 1)];
       writes += 1;
       if (response === undefined) throw new Error("返事を用意していない");
       return response;
     }
+    // 予約の下書きの一覧（詳細の中と、操作の結果の下書きを開くリンク）は空
+    if (url.endsWith("/drafts")) return { status: 200, body: { drafts: [] } };
     return { status: 200, body: writes > 0 ? detailAfter : detail };
   });
   render(<ReservationDetailPage api={fake.api} reservationId={detail.id} />);
@@ -127,7 +129,7 @@ describe("予約の変更", () => {
     expect(result.textContent).toContain("予約を変更しました。");
     expect(result.textContent).toContain("変更のお知らせ、あて先の予約：この予約");
     // 成功したら詳細を読み直し、フォームを閉じる
-    expect(calls.filter((c) => c.method === "GET")).toHaveLength(2);
+    expect(calls.filter((c) => c.method === "GET" && !c.url.endsWith("/drafts"))).toHaveLength(2);
     expect(screen.queryByRole("form", { name: "予約の変更" })).toBeNull();
   });
 
@@ -350,7 +352,9 @@ describe("バッファの切り替え", () => {
       "第二キープの繰り上げの案内、あて先の予約：res-second-1、残っている仮予約なし（繰り上げられます）",
     ]);
     // 読み直した詳細のバッファ
-    await vi.waitFor(() => expect(calls.filter((c) => c.method === "GET")).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "GET" && !c.url.endsWith("/drafts"))).toHaveLength(2),
+    );
     const bufferTerm = screen.getByText("バッファ", { selector: "dt" });
     expect(bufferTerm.nextElementSibling?.textContent).toBe("30分");
   });

@@ -3,6 +3,7 @@ import { currentPriceTable } from "@zebra/booking-core";
 import type {
   AdminCustomerField,
   AdminDraftKind,
+  AdminDraftStatus,
   AdminError,
   AdminWarning,
   ReservationStatus,
@@ -49,6 +50,13 @@ export const draftKindLabel: Record<AdminDraftKind, string> = {
   change: "変更のお知らせ",
 };
 
+/** 下書きの状態（mail.md「下書きの送り方」） */
+export const draftStatusLabel: Record<AdminDraftStatus, string> = {
+  unsent: "未送信",
+  sent: "送信済み",
+  skipped: "送らない",
+};
+
 /** 履歴の操作（reservation-model.md「履歴」） */
 export const historyOperationLabel = {
   apply: "申込",
@@ -93,7 +101,8 @@ export const errorMessage: Record<AdminError, string> = {
   "still-held": "まだ仮予約のまま重なっている仮予約が付いているため、繰り上げられません。",
   "not-changeable":
     "今の状態の予約は変更できません（変更とバッファの切り替えは、承認済みの仮予約・本予約だけです）。画面を読み直してください。",
-  "draft-not-unsent": "未送信の下書きではありません。",
+  "draft-not-unsent":
+    "未送信の下書きではないため（すでに送信済み・送らないにしてあります）、変えられません。送信済み・送らないにした下書きは、未送信に戻せません。",
   "google-calendar-block":
     "Googleカレンダーから取り込んだブロック枠は、直したり消したりできません。",
   "unacknowledged-warnings": "確認していない警告があります。",
@@ -119,6 +128,13 @@ export function failureMessage(failure: ApiFailure): string {
     case "unexpected":
       return `API から思わぬ返事がありました（HTTP ${failure.status}）。API（pnpm dev:api）が起動しているか確かめてください。`;
   }
+}
+
+/** 下書きの読み込み・操作の失敗を、管理者に見せる文にする（ないときは「予約」ではなく「予約か下書き」と書く） */
+export function draftFailureMessage(failure: ApiFailure): string {
+  return failure.kind === "rejected" && failure.error === "not-found"
+    ? "予約か下書きが見つかりません。未送信の下書きの一覧か、予約の詳細から開き直してください。"
+    : failureMessage(failure);
 }
 
 const priceTable = currentPriceTable();

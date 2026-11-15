@@ -4,7 +4,13 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { DateTime } from "luxon";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.tsx";
-import { detailResponse, fakeApi, listResponse, type FakeResponse } from "./test-support.ts";
+import {
+  detailResponse,
+  fakeApi,
+  fakeClipboard,
+  listResponse,
+  type FakeResponse,
+} from "./test-support.ts";
 
 const now = () => DateTime.fromISO("2026-11-15T10:00:00+09:00");
 
@@ -20,6 +26,7 @@ const openDirectEntry = async (responses: FakeResponse[]) => {
       if (response === undefined) throw new Error("返事を用意していない");
       return response;
     }
+    if (url.endsWith("/drafts")) return { status: 200, body: { drafts: [] } };
     if (url.startsWith("/admin/reservations/")) {
       return {
         status: 200,
@@ -35,7 +42,7 @@ const openDirectEntry = async (responses: FakeResponse[]) => {
     }
     return { status: 200, body: listResponse() };
   });
-  render(<App api={fake.api} now={now} />);
+  render(<App api={fake.api} now={now} copier={fakeClipboard().copier} />);
   await screen.findByText("架空 太郎");
   expect(screen.getByRole("link", { name: "予約を直接入れる" }).getAttribute("href")).toBe(
     "#/direct-entry",

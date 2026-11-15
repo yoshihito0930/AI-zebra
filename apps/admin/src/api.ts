@@ -10,13 +10,16 @@ import {
   AdminCustomerInfoRequest,
   AdminDirectEntryAccepted,
   AdminDirectEntryRequest,
+  AdminDraftDetail,
   AdminEmptyRequest,
   AdminOperationAccepted,
   AdminReceiptLookup,
   AdminRejected,
   AdminReservationDetail,
+  AdminReservationDraftList,
   AdminReservationList,
   AdminReservationListQuery,
+  AdminUnsentDraftList,
   type AdminError,
   type AdminWarning,
   type Yen,
@@ -35,6 +38,9 @@ export type ApiResult<T> = { ok: true; value: T } | { ok: false; failure: ApiFai
 
 /** 詳細から行う操作（1回目の操作。ルートの最後の部分） */
 export type AdminOperation = "approve" | "reject" | "promote" | "cancel" | "move-up";
+
+/** 下書きの状態を変える操作（3回目。ルートの最後の部分）：送信済みにする・送らないにする */
+export type DraftAction = "sent" | "skip";
 
 export interface AdminApi {
   listReservations(query: AdminReservationListQuery): Promise<ApiResult<AdminReservationList>>;
@@ -62,6 +68,21 @@ export interface AdminApi {
   updateBlock(id: string, request: AdminBlockRequest): Promise<ApiResult<undefined>>;
   /** ブロック枠を消す（2回目a）。成功は 200（本文なし） */
   deleteBlock(id: string): Promise<ApiResult<undefined>>;
+  /** 未送信の下書きの一覧（3回目）。作った順 */
+  listUnsentDrafts(): Promise<ApiResult<AdminUnsentDraftList>>;
+  /** 予約の下書きの一覧（3回目）。送信済み・送らないも含め、作った順 */
+  listReservationDrafts(reservationId: string): Promise<ApiResult<AdminReservationDraftList>>;
+  /** 下書きを開く（3回目）。文面（件名・本文）は API がテンプレートから作る */
+  getDraft(reservationId: string, draftId: string): Promise<ApiResult<AdminDraftDetail>>;
+  /**
+   * 送信済みにする・送らないにする（3回目）。本文は空（{}）、成功は 200（本文なし）。
+   * 未送信でない下書きは 409（draft-not-unsent）。メールは送らない（INV-6）
+   */
+  setDraftStatus(
+    reservationId: string,
+    draftId: string,
+    action: DraftAction,
+  ): Promise<ApiResult<undefined>>;
 }
 
 /** パースに使うスキーマの形（Zod のスキーマが満たす） */
@@ -72,7 +93,7 @@ interface Schema<T> {
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /**
- * 本文のない返事（ブロック枠を直す・消す、お客様の情報の変更。API は 200 と空の本文を返す）。
+ * 本文のない返事（ブロック枠を直す・消す、お客様の情報の変更、下書きを送信済み・送らないにする。API は 200 と空の本文を返す）。
  * 契約に返事の形がないので、本文がないことだけを確かめ、中身は使わない
  */
 const NoBody: Schema<undefined> = {
@@ -101,6 +122,8 @@ export function createAdminApi(fetchFn: FetchLike, baseUrl = ""): AdminApi {
   const reservationPath = (id: string, rest = "") =>
     `/admin/reservations/${encodeURIComponent(id)}${rest}`;
   const blockPath = (id: string) => `/admin/blocks/${encodeURIComponent(id)}`;
+  const draftPath = (reservationId: string, draftId: string, rest = "") =>
+    reservationPath(reservationId, `/drafts/${encodeURIComponent(draftId)}${rest}`);
 
   return {
     async listReservations(query) {
@@ -167,6 +190,23 @@ export function createAdminApi(fetchFn: FetchLike, baseUrl = ""): AdminApi {
     },
     async deleteBlock(id) {
       return send("DELETE", blockPath(id), NoBody);
+    },
+    async listUnsentDrafts() {
+      return call("/admin/drafts", AdminUnsentDraftList);
+    },
+    async listReservationDrafts(reservationId) {
+      return call(reservationPath(reservationId, "/drafts"), AdminReservationDraftList);
+    },
+    async getDraft(reservationId, draftId) {
+      return call(draftPath(reservationId, draftId), AdminDraftDetail);
+    },
+    async setDraftStatus(reservationId, draftId, action) {
+      return send(
+        "POST",
+        draftPath(reservationId, draftId, `/${action}`),
+        NoBody,
+        AdminEmptyRequest.parse({}),
+      );
     },
   };
 }
