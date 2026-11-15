@@ -1,4 +1,5 @@
 // 画面に出す日時と金額の形（INV-7、INV-9）。API の日時は ISO 8601 のオフセット付きで来るので、JST に直して表示する
+import { Yen } from "@zebra/contracts";
 import { DateTime } from "luxon";
 
 /** 表示と期間の判定に使うタイムゾーン（INV-7） */
@@ -35,6 +36,32 @@ const yenFormat = new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 0 });
 export function formatYen(yen: number): string {
   if (!Number.isSafeInteger(yen)) throw new Error(`金額が整数の円ではない：${yen}`);
   return `${yenFormat.format(yen)}円`;
+}
+
+/** 日時の入力欄（input type="datetime-local"）の値の形。秒は持たない */
+const INPUT_FORMAT = "yyyy-MM-dd'T'HH:mm";
+
+/** ISO 8601 の日時を、日時の入力欄の値（JST の「2026-11-20T13:00」）にする（INV-7） */
+export function toJstInput(iso: string): string {
+  return toJst(iso).toFormat(INPUT_FORMAT);
+}
+
+/**
+ * 日時の入力欄の値（「2026-11-20T13:00」）を、JST の時刻として読み、JST のオフセット付きの ISO 8601 にする（INV-7）。
+ * ブラウザのタイムゾーンによらず JST で読む。日時の形でなければ undefined
+ */
+export function fromJstInput(value: string): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return undefined;
+  const dateTime = DateTime.fromFormat(value, INPUT_FORMAT, { zone: JST });
+  return dateTime.isValid ? (dateTime.toISO() ?? undefined) : undefined;
+}
+
+/** 確定金額の入力（0以上の整数の円。INV-9）。整数でなければ undefined */
+export function parseYenInput(text: string): Yen | undefined {
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Yen.safeParse(Number(trimmed));
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** その時点の JST の月の初日と末日（YYYY-MM-DD）。一覧の期間の初期値 */

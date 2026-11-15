@@ -1,6 +1,14 @@
 import { DateTime } from "luxon";
 import { describe, expect, it } from "vitest";
-import { compareByTime, formatDateTime, formatTimeRange, formatYen, monthOf } from "./format.ts";
+import {
+  compareByTime,
+  formatDateTime,
+  formatTimeRange,
+  formatYen,
+  fromJstInput,
+  monthOf,
+  toJstInput,
+} from "./format.ts";
 
 describe("日時の表示（JST）", () => {
   it("JST のオフセット付きの日時を、そのまま JST で出す", () => {
@@ -21,6 +29,25 @@ describe("日時の表示（JST）", () => {
     expect(formatTimeRange("2026-11-20T22:00:00+09:00", "2026-11-21T02:00:00+09:00")).toBe(
       "2026/11/20(金) 22:00〜11/21(土) 02:00",
     );
+  });
+});
+
+describe("日時の入力欄（JST）", () => {
+  it("API の日時を、JST の入力欄の値にする（UTC で来ても JST に直す）", () => {
+    expect(toJstInput("2026-11-20T13:00:00.000+09:00")).toBe("2026-11-20T13:00");
+    expect(toJstInput("2026-11-19T15:30:00Z")).toBe("2026-11-20T00:30");
+  });
+
+  it("入力欄の値を JST の時刻として読み、JST のオフセット付きで送る形にする", () => {
+    expect(fromJstInput("2026-11-20T13:00")).toBe("2026-11-20T13:00:00.000+09:00");
+    // 日をまたいだ深夜
+    expect(fromJstInput("2026-11-21T02:30")).toBe("2026-11-21T02:30:00.000+09:00");
+  });
+
+  it("日時の形でない値は undefined", () => {
+    for (const value of ["", "2026-11-20", "2026-11-20T25:00", "2026-02-30T10:00", "あ"]) {
+      expect(fromJstInput(value)).toBeUndefined();
+    }
   });
 });
 

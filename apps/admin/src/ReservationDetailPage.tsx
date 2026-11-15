@@ -1,5 +1,5 @@
 // 予約の詳細（GET /admin/reservations/{id}）。予約の内容、お客様の情報、履歴、承認待ちなら今の見積、取消できるなら今のキャンセル料。
-// 下に、今の状態でできる操作を出す（OperationPanel）
+// 下に、今の状態でできる操作（OperationPanel）と、直す（予約の変更・バッファの切り替え・お客様の情報。ReservationEditPanel）を出す
 import type { AdminOperationAccepted, AdminReservationDetail } from "@zebra/contracts";
 import { useCallback, useEffect, useState } from "react";
 import type { AdminApi, AdminOperation } from "./api.ts";
@@ -14,7 +14,8 @@ import {
   shootingTypeLabel,
   statusLabel,
 } from "./labels.ts";
-import { OperationPanel, OperationResult } from "./OperationPanel.tsx";
+import { OperationPanel, OperationResult, operationLabel } from "./OperationPanel.tsx";
+import { ReservationEditPanel } from "./ReservationEditPanel.tsx";
 import { detailHref, listHref } from "./route.ts";
 
 type LoadState =
@@ -26,8 +27,8 @@ export function ReservationDetailPage(props: { api: AdminApi; reservationId: str
   const { api, reservationId } = props;
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [lastResult, setLastResult] = useState<{
-    operation: AdminOperation;
-    accepted: AdminOperationAccepted;
+    message: string;
+    accepted?: AdminOperationAccepted | undefined;
   }>();
 
   const load = useCallback(async () => {
@@ -49,10 +50,12 @@ export function ReservationDetailPage(props: { api: AdminApi; reservationId: str
     };
   }, [load]);
 
-  const onSucceeded = async (operation: AdminOperation, accepted: AdminOperationAccepted) => {
-    setLastResult({ operation, accepted });
+  const onEdited = async (message: string, accepted?: AdminOperationAccepted) => {
+    setLastResult({ message, accepted });
     setState(await load());
   };
+  const onSucceeded = (operation: AdminOperation, accepted: AdminOperationAccepted) =>
+    onEdited(`${operationLabel[operation]}しました。`, accepted);
 
   return (
     <section>
@@ -62,7 +65,7 @@ export function ReservationDetailPage(props: { api: AdminApi; reservationId: str
       <h2>予約の詳細</h2>
       {lastResult !== undefined && (
         <OperationResult
-          operation={lastResult.operation}
+          message={lastResult.message}
           accepted={lastResult.accepted}
           reservationId={reservationId}
         />
@@ -77,6 +80,12 @@ export function ReservationDetailPage(props: { api: AdminApi; reservationId: str
             api={api}
             detail={state.detail}
             onSucceeded={onSucceeded}
+          />
+          <ReservationEditPanel
+            key={`edit-${state.detail.id}`}
+            api={api}
+            detail={state.detail}
+            onEdited={onEdited}
           />
         </>
       )}
