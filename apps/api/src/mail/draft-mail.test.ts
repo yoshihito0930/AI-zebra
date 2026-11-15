@@ -17,9 +17,12 @@ import {
 // - 例の表の「メールアドレスのない予約の下書き」の行は、あて先を決めるのが API なので、管理 API のテスト
 //   （apps/api/src/admin/routes-round3.int.test.ts）で確かめる
 // - 日時の行は、同じ時点を JST と UTC の2通りで渡して、どちらも同じ文面になることを確かめる（INV-7。TESTING.md）
-// - HTML の書き方（タグの形、色の値）は決めていない。「HTML から <br> を改行に、ほかのタグを除き、エスケープを戻すと、
-//   テキストの本文と同じになる」ことと、強調した文を囲む span の style に、赤・青の色か下線があることで確かめる。
-//   赤は「赤の成分が 128 以上で、緑・青が 100 未満」、青は「青の成分が 128 以上で、赤が 100 未満・緑が 128 未満」とする
+// - HTML の本文は、「HTML から <br> を改行に、ほかのタグを除き、エスケープを戻すと、テキストの本文と同じになる」ことと、
+//   強調した文を mail.md「強調の書き方」の形の span（`<span style="color:#ff0000">` 赤、`<span style="color:#0000ff">` 青、
+//   `<span style="text-decoration:underline">` 下線）で囲むことで確かめる
+// - キャンセル料の2行は、金額が1円以上のときだけ出す（mail.md「取消」）
+// - 承認のテンプレート（本予約・仮予約・第二キープ）は、承認したときの状態で選ぶ（mail.md「承認（本予約）」）。
+//   どの状態だったかは呼び出す側（API）が approvedAs で渡す
 // - 例の表には撮影内容の並びの指定がないが、mail.md に「並びはこの順」とあるので、逆の順で渡しても同じ文面になることも確かめる
 // - 担当者名・署名・お客様の情報は、架空の値を使う
 
@@ -114,64 +117,26 @@ function htmlToText(html: string): string {
   return decodeEntities(html.replace(/<br\s*\/?>\n?/gi, "\n").replace(/<[^>]*>/g, ""));
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * その文だけを、決まった形の span で囲んでいること（mail.md「強調の書き方」：
+ * `<span style="color:#ff0000">`・`<span style="color:#0000ff">`・`<span style="text-decoration:underline">`）
+ */
+function expectSpan(html: string, style: string, inner: string): void {
+  expect(html, `「${inner}」を囲む span（${style}）`).toContain(
+    `<span style="${style}">${inner}</span>`,
+  );
 }
 
-/** その文だけを囲む span の style を返す */
-function spanStyleAround(html: string, inner: string): string {
-  const match = new RegExp(
-    `<span\\s[^>]*style=(["'])(.*?)\\1[^>]*>${escapeRegExp(inner)}</span>`,
-  ).exec(html);
-  expect(match, `「${inner}」を囲む span`).not.toBeNull();
-  return match?.[2] ?? "";
+function expectRed(html: string, inner: string): void {
+  expectSpan(html, "color:#ff0000", inner);
 }
 
-/** style の color（background-color ではないもの）を [赤, 緑, 青] にする */
-function colorOf(style: string): [number, number, number] | undefined {
-  const value = /(?:^|;)\s*color\s*:\s*([^;]+)/i.exec(style)?.[1]?.trim().toLowerCase();
-  if (value === undefined) return undefined;
-  if (value === "red") return [255, 0, 0];
-  if (value === "blue") return [0, 0, 255];
-  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(value);
-  if (short !== null) {
-    return [short[1], short[2], short[3]].map((h) => Number.parseInt(`${h}${h}`, 16)) as [
-      number,
-      number,
-      number,
-    ];
-  }
-  const long = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/.exec(value);
-  if (long !== null) {
-    return [long[1], long[2], long[3]].map((h) => Number.parseInt(h ?? "", 16)) as [
-      number,
-      number,
-      number,
-    ];
-  }
-  const rgb = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/.exec(value);
-  if (rgb !== null) {
-    return [rgb[1], rgb[2], rgb[3]].map((n) => Number(n)) as [number, number, number];
-  }
-  return undefined;
+function expectBlue(html: string, inner: string): void {
+  expectSpan(html, "color:#0000ff", inner);
 }
 
-function expectRed(style: string): void {
-  const color = colorOf(style);
-  expect(color, style).toBeDefined();
-  const [r, g, b] = color ?? [0, 0, 0];
-  expect(r >= 128 && g < 100 && b < 100, style).toBe(true);
-}
-
-function expectBlue(style: string): void {
-  const color = colorOf(style);
-  expect(color, style).toBeDefined();
-  const [r, g, b] = color ?? [0, 0, 0];
-  expect(b >= 128 && r < 100 && g < 128, style).toBe(true);
-}
-
-function expectUnderline(style: string): void {
-  expect(style).toMatch(/text-decoration(?:-line)?\s*:[^;]*underline/i);
+function expectUnderline(html: string, inner: string): void {
+  expectSpan(html, "text-decoration:underline", inner);
 }
 
 /** どの文面にも言えること：テキストに強調の印やテンプレートの印が残らない。HTML はテキストと同じ中身 */
@@ -372,7 +337,7 @@ describe("下書きのテンプレート", () => {
   it("本文の `<赤>撮影当日に履いていらっしゃった靴のご使用は禁止です。</赤>`：コピーする本文では、その文が赤字になる。テキストの本文には印が出ない", () => {
     const mail = render(firmApproval);
     expect(lines(mail)).toContain(`・${redShoes}`);
-    expectRed(spanStyleAround(mail.html, redShoes));
+    expectRed(mail.html, redShoes);
     expectWellFormed(mail);
   });
 
@@ -645,11 +610,11 @@ describe("下書きのテンプレート：強調の書き方（テキストで�
     expect(all).toContain(`${fullWidthSpace}${blueSecond}`);
     expect(all).toContain(`・${underlineBoots}はホリゾントを著しく汚損する恐れがございますので`);
 
-    expectRed(spanStyleAround(mail.html, redShoes));
-    expectRed(spanStyleAround(mail.html, redParking));
-    expectBlue(spanStyleAround(mail.html, blueFirst));
-    expectBlue(spanStyleAround(mail.html, blueSecond));
-    expectUnderline(spanStyleAround(mail.html, underlineBoots));
+    expectRed(mail.html, redShoes);
+    expectRed(mail.html, redParking);
+    expectBlue(mail.html, blueFirst);
+    expectBlue(mail.html, blueSecond);
+    expectUnderline(mail.html, underlineBoots);
     expectWellFormed(mail);
   });
 });
@@ -711,6 +676,6 @@ describe("下書きのテンプレート：差し込む値の HTML のエスケ�
     // エスケープを戻すと、テキストの本文と同じになる（値が消えたり、二重にエスケープされたりしない）
     expectWellFormed(mail);
     // 強調の span はそのまま
-    expectRed(spanStyleAround(mail.html, redShoes));
+    expectRed(mail.html, redShoes);
   });
 });

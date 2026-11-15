@@ -49,6 +49,8 @@ import type { AdminUserIdSource } from "./admin-user.ts";
 //   (1) 下書きの操作のあいだに、fetch と https.request（AWS の SES などの外の HTTPS）を呼ばない
 //   （DynamoDB Local は http なので https.request は呼ばれない）。(2) 開くは何も書かず、送信済み・送らないは
 //   その下書きのアイテムだけを変える。送る経路を lint で1つに限るのは、テストの外（core-beliefs.md の INV-6）
+// - 承認の下書きの文面は、承認したときの状態（承認の履歴に残っている承認したあとの状態）で選ぶ（mail.md「承認（本予約）」）。
+//   承認のあとに昇格・取消をしても、承認の下書きは承認したときの文面のまま
 // - 架空の担当者名・署名・お客様の情報を使う
 
 const client = createLocalDynamoClient();
@@ -696,10 +698,10 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
     expect(detail.text).not.toContain("\\n");
     // 承認の下書きは確定金額を持つが、文面には書かない
     expect(detail.text).not.toContain("22,000");
-    // HTML の本文：改行は <br>、強調は span
+    // HTML の本文：改行は <br>、強調は span（mail.md「強調の書き方」）
     expect(detail.html).toMatch(/<br\s*\/?>/i);
-    expect(detail.html).toMatch(
-      /<span\s[^>]*>撮影当日に履いていらっしゃった靴のご使用は禁止です。<\/span>/,
+    expect(detail.html).toContain(
+      '<span style="color:#ff0000">撮影当日に履いていらっしゃった靴のご使用は禁止です。</span>',
     );
     expect(detail.html).not.toContain("<赤>");
   });
@@ -778,6 +780,66 @@ describe("管理 API：下書きを開く（GET /admin/reservations/{id}/drafts/
     expect(detail.attachConsentForm).toBe(false);
     expect(lines(detail)).toContain("【10月13日(火)の18時まで】にご連絡いただけますと幸いです。");
   });
+
+  // 承認のテンプレートは、承認したときの状態で選ぶ（mail.md「承認（本予約）」：承認の履歴に残っている「承認したあとの状態」）
+  it("仮予約の申込を承認したあとに昇格し、承認の下書き（未送信）を開く：仮予約の承認の文面（件名「【スタジオゼブラ】仮予約を承りました」）のまま。昇格の下書きは本予約の文面", async () => {
+    const p = await applyApproved("provisional", "2026-10-20T15:00", "2026-10-20T17:00");
+    await prepareOperation({ kind: "promote", reservationId: p }, preparedAt2);
+
+    const approval = await openDraft(p, await draftIdOf(p, "approval"));
+    const promotion = await openDraft(p, await draftIdOf(p, "promotion"));
+
+    expect(approval.kind).toBe("approval");
+    expect(approval.status).toBe("unsent");
+    expect(approval.subject).toBe("【スタジオゼブラ】仮予約を承りました");
+    expect(approval.attachConsentForm).toBe(false);
+    expect(lines(approval)).toContain(
+      "【2026年10月20日(火) 15時00分〜17時00分】にて、仮予約を承りました。",
+    );
+    expect(lines(approval)).toContain("【10月13日(火)の18時まで】にご連絡いただけますと幸いです。");
+    expect(approval.text).not.toContain("本予約を承りました。");
+    expect(approval.text).not.toContain("◇ ご予約内容 ◇");
+
+    expect(promotion.kind).toBe("promotion");
+    expect(promotion.subject).toBe("【スタジオゼブラ】本予約を承りました");
+    expect(promotion.attachConsentForm).toBe(true);
+    expect(lines(promotion)).toContain("ご利用のご決定のご連絡をありがとうございます。");
+    expect(lines(promotion)).toContain(
+      "【2026年10月20日(火) 15時00分〜17時00分】にて、仮予約から本予約に切り替えました。",
+    );
+    expect(lines(promotion)).toContain("◇ ご予約内容 ◇");
+    expect(lines(promotion)).toContain("◆ 注意事項 ◆");
+  });
+
+  it.each([
+    [
+      "本予約",
+      "firm",
+      "【スタジオゼブラ】本予約を承りました",
+      true,
+      "【2026年10月20日(火) 15時00分〜17時00分】にて、本予約を承りました。",
+    ],
+    [
+      "仮予約",
+      "provisional",
+      "【スタジオゼブラ】仮予約を承りました",
+      false,
+      "【2026年10月20日(火) 15時00分〜17時00分】にて、仮予約を承りました。",
+    ],
+  ] as const)(
+    "%sの申込を承認したあとに取消し、承認の下書き（未送信）を開く：承認したときの文面のまま",
+    async (_, kind, subject, attachConsentForm, line) => {
+      const id = await applyApproved(kind, "2026-10-20T15:00", "2026-10-20T17:00");
+      await prepareOperation({ kind: "cancel", reservationId: id }, preparedAt2);
+
+      const approval = await openDraft(id, await draftIdOf(id, "approval"));
+
+      expect(approval.kind).toBe("approval");
+      expect(approval.subject).toBe(subject);
+      expect(approval.attachConsentForm).toBe(attachConsentForm);
+      expect(lines(approval)).toContain(line);
+    },
+  );
 
   it("開いても何も書かない。下書きは未送信のまま、未送信の一覧に残る", async () => {
     const a = await prepareA();
