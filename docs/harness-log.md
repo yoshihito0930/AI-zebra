@@ -181,6 +181,7 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足りなかったもの：lint（eslint の flat config は .gitignore を読まないので、gitignore に入れた `.claude/worktrees/` も対象になっていた）
 - 足したもの：共通の eslint の設定（tooling/eslint-config）の ignores に `.claude/worktrees/**` を足した。Vitest・spec-coverage は対象のフォルダー（apps・packages・tooling・scripts）を絞っているので、もともと読まない。prettier は .gitignore を読む
 - 次への改善：ルートから全体を見るツールを足すときは、`.claude/worktrees/` を読まないことを確かめる
+- 追記（2026-11-15）：依存の決まりのチェック（dependency-cruiser）も `.claude/worktrees/` を読んでいて、手元の `pnpm deps` が165件の違反で落ちた（3回目の実装の PR #94 で実装担当が報告）。`.dependency-cruiser.cjs` の exclude に足した
 
 ### 2026-11-15 ほかのエージェントの作業ツリーがあると、手元の pnpm check と pnpm test:int が落ちる
 - 起きたこと：管理 API の3回目の実装の PR で、手元の `pnpm check` が `pnpm deps`（dependency-cruiser）で 165 件の違反を出して止まった。違反はどれも `.claude/worktrees/`（ほかのエージェントの作業ツリー。git では無視している）の中のファイルで、そこには node_modules がないので import を解決できない（not-to-unresolvable）。自分のブランチのファイルの違反は 0 件だった。lint・format・typecheck・test・spec-coverage は1つずつ動かして通した。また、`pnpm test:int` を全部動かすと、触っていない統合テスト（公開API の予約状況、2回目b のルートなど）が 15 秒のタイムアウトで 8 件落ちた。そのとき、ほかの作業ツリーでもテストが動いていて、1つのローカルの DynamoDB（`-sharedDb`）を一緒に使っていた。落ちたテストは、1つずつ動かすと 1 秒ほどで通った
