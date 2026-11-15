@@ -176,6 +176,12 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足したもの：フォームの申込は `submitApplication` を呼び、直接入力は管理 API のルートと同じ組み立て（`checkAdminDuration` → `decidePlanId` → `calculatePriceFromTable` → `saveDirectEntry`）をスクリプトに書いた。テーブルが空かは、ScanCommand（読むだけ）で確かめる。apps/api/src は変えていない
 - 次への改善：管理 API のルートで直接入力の組み立てが変わると、スクリプトの組み立てとずれる（統合テストは入ることだけを確かめる）。ずれが問題になったら、管理 API の層に「直接入力の検証から保存まで」の関数（`submitApplication` に当たるもの）を取り出し、ルートとスクリプトの両方から呼ぶ
 
+### 2026-11-15 手元の lint が、ほかのエージェントの作業ツリーのファイルで落ちた
+- 起きたこと：エージェントを worktree で並行に動かしたとき、メインの作業ツリーで動かした `pnpm lint` が、`.claude/worktrees/` の下にある別のエージェントの作業中のファイル（管理画面の部品）で落ちた。そのブランチのファイルではないので、直すことができなかった
+- 足りなかったもの：lint（eslint の flat config は .gitignore を読まないので、gitignore に入れた `.claude/worktrees/` も対象になっていた）
+- 足したもの：共通の eslint の設定（tooling/eslint-config）の ignores に `.claude/worktrees/**` を足した。Vitest・spec-coverage は対象のフォルダー（apps・packages・tooling・scripts）を絞っているので、もともと読まない。prettier は .gitignore を読む
+- 次への改善：ルートから全体を見るツールを足すときは、`.claude/worktrees/` を読まないことを確かめる
+
 ### 2026-11-15 管理画面の2本目（変更・直接入力・バッファ・お客様の情報・ブロック枠）で、契約と API に足りなかったもの
 - 起きたこと：管理画面に、予約の変更・直接入力（警告の確認つき）・バッファの切り替え・お客様の情報の変更・ブロック枠を入れる・直す・消すを足した。apps/api・packages/contracts・packages/booking-core は変えていない。次のことで迷った
   - ブロック枠を直す・消す、お客様の情報の変更は、成功すると 200 と空の本文を返し、契約に返事のスキーマがない。管理画面は「本文がない」ことだけを確かめる（api.ts の NoBody）。本文が付いてきたら「思わぬ返事」にする
