@@ -17,9 +17,12 @@ import {
 // - 例の表の「メールアドレスのない予約の下書き」の行は、あて先を決めるのが API なので、管理 API のテスト
 //   （apps/api/src/admin/routes-round3.int.test.ts）で確かめる
 // - 日時の行は、同じ時点を JST と UTC の2通りで渡して、どちらも同じ文面になることを確かめる（INV-7。TESTING.md）
-// - HTML の書き方（タグの形、色の値）は決めていない。「HTML から <br> を改行に、ほかのタグを除き、エスケープを戻すと、
-//   テキストの本文と同じになる」ことと、強調した文を囲む span の style に、赤・青の色か下線があることで確かめる。
-//   赤は「赤の成分が 128 以上で、緑・青が 100 未満」、青は「青の成分が 128 以上で、赤が 100 未満・緑が 128 未満」とする
+// - HTML の本文は、「HTML から <br> を改行に、ほかのタグを除き、エスケープを戻すと、テキストの本文と同じになる」ことと、
+//   強調した文を mail.md「強調の書き方」の形の span（`<span style="color:#ff0000">` 赤、`<span style="color:#0000ff">` 青、
+//   `<span style="text-decoration:underline">` 下線）で囲むことで確かめる
+// - キャンセル料の2行は、金額が1円以上のときだけ出す（mail.md「取消」）
+// - 承認のテンプレート（本予約・仮予約・第二キープ）は、承認したときの状態で選ぶ（mail.md「承認（本予約）」）。
+//   どの状態だったかは呼び出す側（API）が approvedAs で渡す
 // - 例の表には撮影内容の並びの指定がないが、mail.md に「並びはこの順」とあるので、逆の順で渡しても同じ文面になることも確かめる
 // - 担当者名・署名・お客様の情報は、架空の値を使う
 
@@ -114,64 +117,26 @@ function htmlToText(html: string): string {
   return decodeEntities(html.replace(/<br\s*\/?>\n?/gi, "\n").replace(/<[^>]*>/g, ""));
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * その文だけを、決まった形の span で囲んでいること（mail.md「強調の書き方」：
+ * `<span style="color:#ff0000">`・`<span style="color:#0000ff">`・`<span style="text-decoration:underline">`）
+ */
+function expectSpan(html: string, style: string, inner: string): void {
+  expect(html, `「${inner}」を囲む span（${style}）`).toContain(
+    `<span style="${style}">${inner}</span>`,
+  );
 }
 
-/** その文だけを囲む span の style を返す */
-function spanStyleAround(html: string, inner: string): string {
-  const match = new RegExp(
-    `<span\\s[^>]*style=(["'])(.*?)\\1[^>]*>${escapeRegExp(inner)}</span>`,
-  ).exec(html);
-  expect(match, `「${inner}」を囲む span`).not.toBeNull();
-  return match?.[2] ?? "";
+function expectRed(html: string, inner: string): void {
+  expectSpan(html, "color:#ff0000", inner);
 }
 
-/** style の color（background-color ではないもの）を [赤, 緑, 青] にする */
-function colorOf(style: string): [number, number, number] | undefined {
-  const value = /(?:^|;)\s*color\s*:\s*([^;]+)/i.exec(style)?.[1]?.trim().toLowerCase();
-  if (value === undefined) return undefined;
-  if (value === "red") return [255, 0, 0];
-  if (value === "blue") return [0, 0, 255];
-  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(value);
-  if (short !== null) {
-    return [short[1], short[2], short[3]].map((h) => Number.parseInt(`${h}${h}`, 16)) as [
-      number,
-      number,
-      number,
-    ];
-  }
-  const long = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/.exec(value);
-  if (long !== null) {
-    return [long[1], long[2], long[3]].map((h) => Number.parseInt(h ?? "", 16)) as [
-      number,
-      number,
-      number,
-    ];
-  }
-  const rgb = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/.exec(value);
-  if (rgb !== null) {
-    return [rgb[1], rgb[2], rgb[3]].map((n) => Number(n)) as [number, number, number];
-  }
-  return undefined;
+function expectBlue(html: string, inner: string): void {
+  expectSpan(html, "color:#0000ff", inner);
 }
 
-function expectRed(style: string): void {
-  const color = colorOf(style);
-  expect(color, style).toBeDefined();
-  const [r, g, b] = color ?? [0, 0, 0];
-  expect(r >= 128 && g < 100 && b < 100, style).toBe(true);
-}
-
-function expectBlue(style: string): void {
-  const color = colorOf(style);
-  expect(color, style).toBeDefined();
-  const [r, g, b] = color ?? [0, 0, 0];
-  expect(b >= 128 && r < 100 && g < 128, style).toBe(true);
-}
-
-function expectUnderline(style: string): void {
-  expect(style).toMatch(/text-decoration(?:-line)?\s*:[^;]*underline/i);
+function expectUnderline(html: string, inner: string): void {
+  expectSpan(html, "text-decoration:underline", inner);
 }
 
 /** どの文面にも言えること：テキストに強調の印やテンプレートの印が残らない。HTML はテキストと同じ中身 */
@@ -227,10 +192,12 @@ const otherProvisionalLines = [
 // ---- テスト ----
 
 describe("下書きのテンプレート", () => {
-  it("本予約 2026/10/20 15:00–17:00 の承認：件名は「【スタジオゼブラ】本予約を承りました」。本文に「【2026年10月20日(火) 15時00分〜17時00分】にて、本予約を承りました。」と「ご予約日時：2026年10月20日(火) 15時00分〜17時00分（2時間）」。「同意書を Gmail で添付する」と表示する", () => {
+  it("本予約 2026/10/20 15:00–17:00 の承認：件名は「2026年10月20日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）」。本文に「【2026年10月20日(火) 15時00分〜17時00分】にて、本予約を承りました。」と「ご予約日時：2026年10月20日(火) 15時00分〜17時00分（2時間）」。「同意書を Gmail で添付する」と表示する", () => {
     for (const [zone, start, end] of bothZones("2026-10-20T15:00", "2026-10-20T17:00")) {
       const mail = render(firmApproval, { start, end });
-      expect(mail.subject, zone).toBe("【スタジオゼブラ】本予約を承りました");
+      expect(mail.subject, zone).toBe(
+        "2026年10月20日(火) 15時00分〜17時00分の本予約を承りました（スタジオゼブラ）",
+      );
       expect(lines(mail), zone).toContain(
         "【2026年10月20日(火) 15時00分〜17時00分】にて、本予約を承りました。",
       );
@@ -254,6 +221,27 @@ describe("下書きのテンプレート", () => {
     for (const [zone, start, end] of bothZones("2026-10-20T22:00", "2026-10-21T02:00")) {
       expect(lines(render(firmApproval, { start, end })), zone).toContain(
         "ご予約日時：2026年10月20日(火) 22時00分〜翌2時00分（4時間）",
+      );
+    }
+  });
+
+  it("本予約 2026/10/20 22:00–10/21 02:00 の承認：件名は「2026年10月20日(火) 22時00分〜翌2時00分の本予約を承りました（スタジオゼブラ）」", () => {
+    for (const [zone, start, end] of bothZones("2026-10-20T22:00", "2026-10-21T02:00")) {
+      expect(render(firmApproval, { start, end }).subject, zone).toBe(
+        "2026年10月20日(火) 22時00分〜翌2時00分の本予約を承りました（スタジオゼブラ）",
+      );
+    }
+  });
+
+  // 文面は開いたときの予約の内容で作るので、変えたあとの予約区間を渡す（mail.md「下書きの送り方」）
+  it("本予約 2026/10/20 15:00–17:00 を 10/21 15:00–17:00 に変えた変更：件名は「2026年10月21日(水) 15時00分〜17時00分のご予約の変更を承りました（スタジオゼブラ）」（変えたあとの日時）", () => {
+    for (const [zone, start, end] of bothZones("2026-10-21T15:00", "2026-10-21T17:00")) {
+      const mail = render({ kind: "change" }, { start, end });
+      expect(mail.subject, zone).toBe(
+        "2026年10月21日(水) 15時00分〜17時00分のご予約の変更を承りました（スタジオゼブラ）",
+      );
+      expect(lines(mail), zone).toContain(
+        "ご予約日時：2026年10月21日(水) 15時00分〜17時00分（2時間）",
       );
     }
   });
@@ -372,7 +360,7 @@ describe("下書きのテンプレート", () => {
   it("本文の `<赤>撮影当日に履いていらっしゃった靴のご使用は禁止です。</赤>`：コピーする本文では、その文が赤字になる。テキストの本文には印が出ない", () => {
     const mail = render(firmApproval);
     expect(lines(mail)).toContain(`・${redShoes}`);
-    expectRed(spanStyleAround(mail.html, redShoes));
+    expectRed(mail.html, redShoes);
     expectWellFormed(mail);
   });
 
@@ -399,7 +387,9 @@ describe("下書きのテンプレート", () => {
 
 // ---- 種類ごとの件名と要所（mail.md の種類ごとのテンプレート） ----
 
-const when = "【2026年10月20日(火) 15時00分〜17時00分】";
+/** 本文と件名に入る {予約日時}（10/20 15:00–17:00） */
+const whenText = "2026年10月20日(火) 15時00分〜17時00分";
+const when = `【${whenText}】`;
 
 interface KindCase {
   label: string;
@@ -419,7 +409,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "承認（本予約）",
     draft: firmApproval,
-    subject: "【スタジオゼブラ】本予約を承りました",
+    subject: `${whenText}の本予約を承りました（スタジオゼブラ）`,
     attachConsentForm: true,
     present: [
       "この度はスタジオ利用のお申し込みをありがとうございます。",
@@ -434,7 +424,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "承認（仮予約）",
     draft: provisionalApproval,
-    subject: "【スタジオゼブラ】仮予約を承りました",
+    subject: `${whenText}の仮予約を承りました（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       "この度は仮予約のお申し込みをありがとうございます。",
@@ -449,7 +439,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "承認（第二キープ）",
     draft: { kind: "approval", approvedAs: "second-hold" },
-    subject: "【スタジオゼブラ】第二キープを承りました",
+    subject: `${whenText}の第二キープを承りました（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}にて、第二キープを承りました。`,
@@ -463,7 +453,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "却下",
     draft: { kind: "rejection" },
-    subject: "【スタジオゼブラ】お申し込みについて",
+    subject: `${whenText}のお申し込みについて（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `誠に申し訳ございませんが、${when}のお申し込みは`,
@@ -476,7 +466,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "昇格（仮予約から本予約へ）",
     draft: { kind: "promotion" },
-    subject: "【スタジオゼブラ】本予約を承りました",
+    subject: `${whenText}の本予約を承りました（スタジオゼブラ）`,
     attachConsentForm: true,
     present: [
       "ご利用のご決定のご連絡をありがとうございます。",
@@ -496,7 +486,7 @@ const kindCases: readonly KindCase[] = [
       kind: "cancellation",
       cancellationFee: { ratePercent: 80, fee: Yen.parse(17_600) },
     },
-    subject: "【スタジオゼブラ】ご予約のキャンセルを承りました",
+    subject: `${whenText}のご予約のキャンセルを承りました（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}のご予約のキャンセルを承りました。`,
@@ -510,7 +500,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "変更",
     draft: { kind: "change" },
-    subject: "【スタジオゼブラ】ご予約内容の変更を承りました",
+    subject: `${whenText}のご予約の変更を承りました（スタジオゼブラ）`,
     attachConsentForm: false,
     present: ["ご予約内容の変更を承りました。", "変更後のご予約内容は下記のとおりです。"],
     absent: [],
@@ -520,7 +510,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "第二キープの終了",
     draft: { kind: "second-hold-ended" },
-    subject: "【スタジオゼブラ】第二キープについて",
+    subject: `${whenText}の第二キープについて（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}の第二キープについてご連絡いたします。`,
@@ -534,7 +524,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "繰り上げの案内",
     draft: { kind: "move-up-notice", remainingProvisionalIds: [] },
-    subject: "【スタジオゼブラ】第二キープの繰り上げのご案内",
+    subject: `${whenText}の第二キープの繰り上げのご案内（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}の第二キープについてご連絡いたします。`,
@@ -548,7 +538,7 @@ const kindCases: readonly KindCase[] = [
   {
     label: "前倒しの案内",
     draft: { kind: "bring-forward-notice" },
-    subject: "【スタジオゼブラ】ご予約の開始時間について",
+    subject: `${whenText}のご予約の開始時間について（スタジオゼブラ）`,
     attachConsentForm: false,
     present: [
       `${when}のご予約についてご連絡いたします。`,
@@ -645,11 +635,11 @@ describe("下書きのテンプレート：強調の書き方（テキストで�
     expect(all).toContain(`${fullWidthSpace}${blueSecond}`);
     expect(all).toContain(`・${underlineBoots}はホリゾントを著しく汚損する恐れがございますので`);
 
-    expectRed(spanStyleAround(mail.html, redShoes));
-    expectRed(spanStyleAround(mail.html, redParking));
-    expectBlue(spanStyleAround(mail.html, blueFirst));
-    expectBlue(spanStyleAround(mail.html, blueSecond));
-    expectUnderline(spanStyleAround(mail.html, underlineBoots));
+    expectRed(mail.html, redShoes);
+    expectRed(mail.html, redParking);
+    expectBlue(mail.html, blueFirst);
+    expectBlue(mail.html, blueSecond);
+    expectUnderline(mail.html, underlineBoots);
     expectWellFormed(mail);
   });
 });
@@ -711,6 +701,6 @@ describe("下書きのテンプレート：差し込む値の HTML のエスケ�
     // エスケープを戻すと、テキストの本文と同じになる（値が消えたり、二重にエスケープされたりしない）
     expectWellFormed(mail);
     // 強調の span はそのまま
-    expectRed(spanStyleAround(mail.html, redShoes));
+    expectRed(mail.html, redShoes);
   });
 });
