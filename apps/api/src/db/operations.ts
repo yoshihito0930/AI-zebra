@@ -4,6 +4,7 @@
 // 判定は booking-core（approveReservation・rejectReservation・applyReservationOperation・applyReservationChange・
 // applyBufferChange）に任せ、この層は「読む → 判定 → 1トランザクションで書く（版番号が読んだときと同じこと）→ 衝突したら読み直す」を行う。
 // バッファの切り替えも同じ流れ（saveAdminOperation）で書く。入口は buffer-change.ts の saveBufferChange。
+// 今と同じ内容の変更・今と同じバッファへの切り替えは、読んだのと同じ試みの中で判定し、何も書かない（judge の unchanged）。
 // 直接入力・ブロック枠・お客様の情報の変更の保存は、ここでは扱わない。
 // 属性名・履歴の形は、申込の保存（reservations.ts）と同じにする。個人情報（PII のアイテム）は読まず、書かない（INV-10）。
 // ログは出さない（エラーのメッセージにも、属性の名前とキーだけを書き、値は書かない）。
@@ -29,6 +30,7 @@ import {
   checkReservationChangeTime,
   decidePlanId,
   holdsSlots,
+  isChangeable,
   isSecondHoldStatus,
   occupiedRange,
   rejectReservation,
@@ -196,6 +198,8 @@ export interface UnacknowledgedChangeWarnings {
 /**
  * 予約への操作を保存する。予約の META、日ごとのアイテム（操作にかかわる JST の日すべて）、履歴、下書きを
  * 1回の TransactWriteItems で書く（INV-2）。できない操作なら何も書かない。
+ * 変更で、日時・人数・ホリゾントの養生・機材保険・オプション・確定金額がすべて今と同じなら、何も書かずに成功（下書きは空）を返す
+ * （booking.md「予約の変更」）。変更できない状態なら、今と同じでも not-changeable
  */
 export async function saveReservationOperation(
   store: ReservationStore,
@@ -207,8 +211,8 @@ export async function saveReservationOperation(
 }
 
 /**
- * saveAdminOperation の結果。成功なら changed（バッファの切り替えで今と同じバッファなら false で、何も書いていない。
- * ほかの操作では常に true）と、書いた下書き
+ * saveAdminOperation の結果。成功なら changed（バッファの切り替えで今と同じバッファのとき、変更で日時・内容・確定金額が
+ * すべて今と同じときは false で、何も書いていない。ほかは true）と、書いた下書き
  */
 export type SaveAdminOperationResult =
   | { readonly ok: true; readonly changed: boolean; readonly drafts: readonly SavedDraft[] }
@@ -216,7 +220,7 @@ export type SaveAdminOperationResult =
 
 /**
  * 管理者の操作（バッファの切り替えを含む）を保存する。手順は saveReservationOperation と同じ
- * （dynamodb-keys.md「書き込み」）。判定で何もしないとなったら（今と同じバッファ）、何も書かずに changed: false を返す
+ * （dynamodb-keys.md「書き込み」）。判定で何もしないとなったら（今と同じバッファ、今と同じ内容の変更）、何も書かずに changed: false を返す
  */
 export async function saveAdminOperation(
   store: ReservationStore,
@@ -481,7 +485,7 @@ interface Judged {
   /** 操作のあとの予約（読んだ予約すべて） */
   readonly after: readonly Reservation[];
   readonly drafts: readonly OperationDraft[];
-  /** バッファの切り替えで、今と同じバッファのとき true（何も書かない） */
+  /** バッファの切り替えで今と同じバッファのとき、変更で日時・内容・確定金額がすべて今と同じとき true（何も書かない） */
   readonly unchanged?: boolean;
   /** 変更のときだけ：計算し直した見積と、変更後の中身（プランは料金表で決め直したもの）、変更の警告 */
   readonly change?: {
@@ -558,6 +562,17 @@ function judge(
       return { ok: true, after: result.reservations, drafts: result.drafts };
     }
     case "change": {
+      // 日時・内容・確定金額がすべて今と同じなら何もしない（booking.md「予約の変更」）。
+      // 変更できない状態なら、今と同じでも下の applyReservationChange の not-changeable にする（確かめる順は、状態 → 今と同じか）。
+      // 比べる相手は、この試みで読んだ対象の予約の META（申込のときの値ではなく今の値）
+      const target = state.metas.get(operation.reservationId);
+      if (
+        target !== undefined &&
+        isChangeable(target.meta.status) &&
+        isSameAsCurrent(operation, target.meta)
+      ) {
+        return { ok: true, after: reservations, drafts: [], unchanged: true };
+      }
       const time = changeTimeCheck(operation, reservations, now);
       if (!time.ok) return time;
       const result = applyReservationChange({
@@ -601,6 +616,35 @@ function judge(
       };
     }
   }
+}
+
+/**
+ * 変更が今の予約と同じか：日時（同じ時点か。ゾーンによらない。INV-7）・人数・ホリゾントの養生・機材保険・オプション・確定金額。
+ * オプションは並びによらず、同じものを選んでいれば同じ（本文のオプションは重ならない。契約の AdminChangeRequest）。
+ * 見積・プランは比べない（料金表が変わって計算し直した値が前と違っても、この6つが同じなら何もしない。booking.md「予約の変更」）
+ */
+function isSameAsCurrent(
+  operation: Extract<ReservationOperationInput, { kind: "change" }>,
+  meta: ReservationMeta,
+): boolean {
+  const { content } = operation;
+  return (
+    operation.start.toMillis() === meta.start.toMillis() &&
+    operation.end.toMillis() === meta.end.toMillis() &&
+    content.partySize === meta.partySize &&
+    content.cycloramaFloorProtection === meta.cycloramaFloorProtection &&
+    content.equipmentInsurance === meta.equipmentInsurance &&
+    sameOptions(content.optionIds, meta.optionIds) &&
+    meta.confirmedPrice !== undefined &&
+    operation.confirmedPrice === meta.confirmedPrice
+  );
+}
+
+/** 同じオプションを選んでいるか（並びによらない） */
+function sameOptions(a: readonly string[], b: readonly string[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...left].every((id) => right.has(id));
 }
 
 /**
