@@ -320,6 +320,19 @@ export async function batchGet(
 
 const BATCH_GET_BACKOFF_MS = 50;
 
+/** BATCH_GET_LIMIT 件ずつに分けて BatchGet する（一覧の予約の META・氏名、下書きのあて先の予約など） */
+export async function batchGetAll(
+  store: ReservationStore,
+  keys: readonly Item[],
+  projection?: BatchGetProjection,
+): Promise<Item[]> {
+  const items: Item[] = [];
+  for (let i = 0; i < keys.length; i += BATCH_GET_LIMIT) {
+    items.push(...(await batchGet(store, keys.slice(i, i + BATCH_GET_LIMIT), projection)));
+  }
+  return items;
+}
+
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -1010,13 +1023,13 @@ function readBoolean(item: Item, attribute: string, where: string): boolean {
   return value;
 }
 
-function readMap(item: Item, attribute: string, where: string): Item {
+export function readMap(item: Item, attribute: string, where: string): Item {
   const value = item[attribute]?.M;
   if (value === undefined) throw malformed(where, attribute);
   return value;
 }
 
-function readStringList(item: Item, attribute: string, where: string): string[] {
+export function readStringList(item: Item, attribute: string, where: string): string[] {
   const list = item[attribute]?.L;
   if (list === undefined) throw malformed(where, attribute);
   return list.map((element) => {
@@ -1046,7 +1059,7 @@ function readStatus(item: Item, attribute: string, where: string): ReservationSt
   return parsed.data;
 }
 
-function readYen(item: Item, attribute: string, where: string): Yen {
+export function readYen(item: Item, attribute: string, where: string): Yen {
   const parsed = Yen.safeParse(readNumber(item, attribute, where));
   if (!parsed.success) throw malformed(where, attribute);
   return parsed.data;

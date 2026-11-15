@@ -14,6 +14,11 @@
 // 2回目b：バッファの切り替え、お客様の情報・撮影の内容の変更
 // - POST   /admin/reservations/:id/buffer       バッファの切り替え（AdminBufferRequest → 200 と AdminOperationAccepted）
 // - PUT    /admin/reservations/:id/customer     お客様の情報・撮影の内容の変更（AdminCustomerInfoRequest → 200。本文なし）
+// 3回目：下書き（メールは送らない。INV-6。管理者が文面を開いて Gmail から送る）
+// - GET    /admin/drafts                                       未送信の下書きの一覧（AdminUnsentDraftList）
+// - GET    /admin/reservations/:id/drafts                      予約の下書きの一覧（AdminReservationDraftList）
+// - GET    /admin/reservations/:id/drafts/:draftId             開く（AdminDraftDetail。文面は保存せず、ログにも出さない。INV-10）
+// - POST   /admin/reservations/:id/drafts/:draftId/sent|skip   送信済み・送らないにする（AdminEmptyRequest → 200。本文なし）
 // エラーは AdminRejected（{ error: <理由> }。確認していない警告があるときは warnings も）。管理者の id が取れないときは、どのルートも 401
 // - 外から来るクエリ・本文は、最初に契約でパースする（INV-4）。返す本文も契約でパースしてから返す
 // - 判定と保存は保存の層（saveReservationOperation・saveDirectEntry・saveAdminBlock など）に、料金・キャンセル料の計算は
@@ -38,14 +43,17 @@ import {
   AdminCustomerInfoRequest,
   AdminDirectEntryAccepted,
   AdminDirectEntryRequest,
+  AdminDraftDetail,
   AdminEmptyRequest,
   type AdminError,
   AdminOperationAccepted,
   AdminReceiptLookup,
   AdminRejected,
   AdminReservationDetail,
+  AdminReservationDraftList,
   AdminReservationList,
   AdminReservationListQuery,
+  AdminUnsentDraftList,
   type AdminWarning,
   type PriceTable,
   ReceiptNumber,
@@ -69,6 +77,16 @@ import { saveBufferChange } from "../db/buffer-change.ts";
 import { saveCustomerInfo } from "../db/customer-info.ts";
 import { type DirectEntry, saveDirectEntry } from "../db/direct-entry.ts";
 import {
+  type StoredDraft,
+  getDraft,
+  listReservationDrafts,
+  listUnsentDrafts,
+  readDraftRecipients,
+  reservationExists,
+  saveDraftStatus,
+} from "../db/drafts.ts";
+import {
+  type OperationDraft,
   type ReservationOperationInput,
   type SaveOperationFailure,
   type SaveOperationOptions,
@@ -85,8 +103,10 @@ import {
   findReservationIdByReceiptNumber,
   getReservation,
 } from "../db/reservations.ts";
-import type { AdminUserIdSource } from "./admin-user.ts";
+import { type DraftMailContent, renderDraftMail } from "../mail/draft-mail.ts";
 import type { MailSettings } from "../mail/settings.ts";
+import type { AdminUserIdSource } from "./admin-user.ts";
+import { draftIdOf, skOfDraftId } from "./draft-id.ts";
 
 export interface AdminDeps {
   store: ReservationStore;
@@ -372,6 +392,110 @@ export function createAdminRoute(deps: AdminDeps): Hono {
     if (!result.ok) return rejected(c, result.reason);
     return c.body(null, 200);
   });
+
+  // ---- 3回目：下書き。どのルートもメールを送らない（INV-6）。文面・個人情報・担当者名・署名をログに出さない（INV-10） ----
+
+  // 未送信の下書きの一覧（作った順）。予約の開始とお客様の氏名は、読んだときの予約の値
+  route.get("/admin/drafts", async (c) => {
+    const drafts = await listUnsentDrafts(deps.store);
+    const recipients = await readDraftRecipients(
+      deps.store,
+      drafts.map((stored) => stored.draft.reservationId),
+    );
+    return c.json(
+      AdminUnsentDraftList.parse({
+        drafts: drafts.map((stored) => {
+          const recipient = requireDefined(recipients.get(stored.draft.reservationId));
+          return {
+            draftId: draftIdOf(stored.sk),
+            reservationId: stored.draft.reservationId,
+            kind: stored.draft.kind,
+            createdAt: jstIso(stored.createdAt),
+            reservationStart: jstIso(recipient.start),
+            customerName: recipient.customerName,
+          };
+        }),
+      }),
+      200,
+    );
+  });
+
+  // 予約の下書きの一覧（送信済み・送らないも、作った順）。予約がなければ 404
+  route.get("/admin/reservations/:id/drafts", async (c) => {
+    const reservationId = c.req.param("id");
+    if (!(await reservationExists(deps.store, reservationId))) return rejected(c, "not-found");
+    const drafts = await listReservationDrafts(deps.store, reservationId);
+    return c.json(
+      AdminReservationDraftList.parse({ drafts: drafts.map(toReservationDraftSummary) }),
+      200,
+    );
+  });
+
+  // 開く：予約の META・個人情報・履歴を読み、テンプレートで件名と本文を作る。何も書かない。文面は保存しない
+  route.get("/admin/reservations/:id/drafts/:draftId", async (c) => {
+    const detail = await getReservation(deps.store, c.req.param("id"));
+    if (detail === null) return rejected(c, "not-found");
+    const sk = skOfDraftId(c.req.param("draftId"));
+    const stored = sk === undefined ? null : await getDraft(deps.store, detail.id, sk);
+    if (stored === null) return rejected(c, "not-found");
+
+    const mail = renderDraftMail({
+      draft: draftMailContentOf(stored.draft, detail.history),
+      // 文面は、開いたときの予約の内容で作る（差し込む値は、下書きを作ったときの値。mail.md「下書きの送り方」）
+      reservation: {
+        start: detail.start,
+        end: detail.end,
+        partySize: detail.partySize,
+        equipmentInsurance: detail.equipmentInsurance,
+        customer: {
+          name: detail.customer.name,
+          photographerName: detail.customer.photographerName,
+        },
+        shooting: { types: detail.shooting.types, details: detail.shooting.details },
+      },
+      staffName: deps.mail?.staffName,
+      signature: deps.mail?.signature,
+    });
+    return c.json(
+      AdminDraftDetail.parse({
+        draftId: draftIdOf(stored.sk),
+        reservationId: detail.id,
+        kind: stored.draft.kind,
+        status: stored.status,
+        createdAt: jstIso(stored.createdAt),
+        // メールアドレスのない予約は、あて先を持たない（「メールアドレスがありません」の表示は管理画面がする）
+        ...(detail.customer.email === undefined ? {} : { to: detail.customer.email }),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+        attachConsentForm: mail.attachConsentForm,
+      }),
+      200,
+    );
+  });
+
+  // 送信済み・送らないにする。未送信の下書きだけ（保存の層が、未送信であることを条件に書く）
+  for (const [action, status] of [
+    ["sent", "sent"],
+    ["skip", "skipped"],
+  ] as const) {
+    route.post(`/admin/reservations/:id/drafts/:draftId/${action}`, async (c) => {
+      const body = await readJsonBody(c.req.raw);
+      if (!body.ok || !AdminEmptyRequest.safeParse(body.value).success) {
+        return rejected(c, "invalid-input");
+      }
+      // 形の合わない下書きの id は、どの下書きにもならない
+      const sk = skOfDraftId(c.req.param("draftId"));
+      if (sk === undefined) return rejected(c, "not-found");
+      const result = await saveDraftStatus(
+        deps.store,
+        { reservationId: c.req.param("id"), sk, status },
+        { now: deps.now(), adminUserId: requireDefined(adminUserIdOf(c)) },
+      );
+      if (!result.ok) return rejected(c, result.reason);
+      return c.body(null, 200);
+    });
+  }
 
   // 思わぬエラー：お客様の情報が混ざらないよう、エラーの種類（name）だけをログに出し、中身は返さない（INV-10）
   route.onError((error, c) => {
@@ -746,4 +870,52 @@ function toSnapshot(snapshot: HistorySnapshot) {
       : { provisionalIds: [...snapshot.provisionalIds] }),
     ...(snapshot.optionIds === undefined ? {} : { optionIds: [...snapshot.optionIds] }),
   };
+}
+
+// ---- 下書き（3回目） ----
+
+function toReservationDraftSummary(stored: StoredDraft) {
+  return {
+    draftId: draftIdOf(stored.sk),
+    kind: stored.draft.kind,
+    status: stored.status,
+    createdAt: jstIso(stored.createdAt),
+    ...(stored.statusChange === undefined
+      ? {}
+      : { statusChangedAt: jstIso(stored.statusChange.at) }),
+  };
+}
+
+/** 保存された下書き（種類と、作ったときの差し込む値）を、文面を作る関数の入力にする */
+function draftMailContentOf(
+  draft: OperationDraft,
+  history: readonly HistoryEntry[],
+): DraftMailContent {
+  switch (draft.kind) {
+    case "approval":
+      return { kind: "approval", approvedAs: approvedStatusOf(history) };
+    case "cancellation":
+      return { kind: "cancellation", cancellationFee: { ...draft.cancellationFee } };
+    case "move-up-notice":
+      return { kind: "move-up-notice", remainingProvisionalIds: draft.remainingProvisionalIds };
+    case "rejection":
+    case "promotion":
+    case "second-hold-ended":
+    case "bring-forward-notice":
+    case "change":
+      return { kind: draft.kind };
+  }
+}
+
+/**
+ * 承認したときの状態：承認の履歴に残っている「承認したあとの状態」（mail.md「承認（本予約）」）。
+ * 承認のあとに昇格・取消をしても、承認の下書きは承認したときの文面のまま。承認は1つの予約に1回だけ
+ */
+function approvedStatusOf(
+  history: readonly HistoryEntry[],
+): "firm" | "provisional" | "second-hold" {
+  const approval = history.filter((entry) => entry.operation === "approve").at(-1);
+  const status = approval?.after?.status;
+  if (status === "firm" || status === "provisional" || status === "second-hold") return status;
+  throw new Error("承認の下書きの予約に、承認したあとの状態の履歴がない");
 }
