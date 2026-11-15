@@ -4,7 +4,3 @@
 
 # docs/product-specs/index.md
 Googleカレンダーの取り込み（並行稼働のため）
-
-# docs/product-specs/mail.md
-下書きの送り方
-下書きのテンプレート
