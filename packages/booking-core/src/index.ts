@@ -66,7 +66,7 @@ export type {
   RejectionDraft,
   RejectionResult,
 } from "./reservation-approval.ts";
-export { applyReservationChange } from "./reservation-change.ts";
+export { applyReservationChange, isChangeable } from "./reservation-change.ts";
 export type {
   ReservationChange,
   ReservationChangeContent,
