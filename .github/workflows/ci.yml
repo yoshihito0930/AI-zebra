@@ -41,6 +41,19 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm typecheck
 
+  # HP（Astro）と管理画面（Vite）を本番用に組み立てられるか。lint・型・テストでは見つからない壊れ方
+  # （Astro の設定、埋め込みの組み立て、import の解決など）を止める。ウィジェットは HP の組み立ての中で組み立てる
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm build
+
   deps:
     name: deps
     runs-on: ubuntu-latest
