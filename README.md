@@ -76,6 +76,15 @@ pnpm dev:admin   # 別のターミナルで（管理画面）
 
 予約の一覧（期間・状態で絞る）、予約の詳細、承認・却下・昇格・取消・繰り上げ、受付番号から探す、ができる。テーブルが空なら、上の `pnpm db:demo` で架空の予約を入れる。メールの下書きを開く画面は、まだない。
 
+## HP を手元で開く
+
+HP（apps/site-zebra）の予約ページ（`/reservation/`）には、予約ウィジェット（packages/booking-widget。カレンダーと申込フォーム）が入っている。ウィジェットは、手元の公開 API に Astro（Vite）の dev サーバーの中継（`/public` → http://localhost:8787）でつなぐ。
+
+1. 上の手順で API を起動する（`pnpm db:up` → `pnpm db:table` → `pnpm db:demo` → `DEV_ADMIN_USER_ID=dev-admin … pnpm dev:api`）。カレンダーに予約を並べたいときは `pnpm db:demo` で架空の予約を入れる
+2. 別のターミナルで `pnpm dev:site` を動かし、http://localhost:4321/reservation/ を開く（トップページ http://localhost:4321/ からもリンクがある）
+
+カレンダーで予約状況（表示名と時間）を見て、申込フォームから申込める。申込むと、管理画面（`pnpm dev:admin`）の一覧に承認待ちとして出る。API を起動していなければ、カレンダーは「読み込めませんでした」と出す。本番での HP と API のつなぎ方（同じオリジンにするか、など）は、AWS の準備のときに決める。
+
 ## 変更の流れ
 
 main は保護されている。ブランチを切って PR を出し、CI（`lint`・`typecheck`・`deps`・`test`・`test-int`・`spec-coverage`・`test-tamper`・`expected-failures`）が通ってからマージする。

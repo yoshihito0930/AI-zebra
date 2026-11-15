@@ -1,0 +1,24 @@
+---
+// ご予約・お問い合わせ（docs/product-specs/index.md の HP の表の /reservation/）。
+// 予約ウィジェット（カレンダーと申込フォーム）を埋め込む。見た目はデザイン（docs/DESIGN.md）が決まってから作る。
+// ウィジェットは現在時刻で今月を決め、ブラウザで予約状況を読むので、ブラウザだけで描く（client:only。ビルドの時刻で描かない）
+import { BookingWidget } from "@zebra/booking-widget";
+---
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ご予約・お問い合わせ | スタジオゼブラ</title>
+  </head>
+  <body>
+    <p><a href="/">スタジオゼブラ</a></p>
+    <h1>ご予約・お問い合わせ</h1>
+    <BookingWidget client:only="react">
+      <p slot="fallback">予約カレンダーを読み込んでいます…</p>
+    </BookingWidget>
+    <noscript>
+      <p>予約カレンダーと申込フォームを使うには、JavaScript を有効にしてください。</p>
+    </noscript>
+  </body>
+</html>

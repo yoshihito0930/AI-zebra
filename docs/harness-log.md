@@ -175,3 +175,12 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足りなかったもの：ツール（「API の検証から保存まで」を、HTTP を通さずに呼べる入口が、申込にはあるが直接入力にはない）
 - 足したもの：フォームの申込は `submitApplication` を呼び、直接入力は管理 API のルートと同じ組み立て（`checkAdminDuration` → `decidePlanId` → `calculatePriceFromTable` → `saveDirectEntry`）をスクリプトに書いた。テーブルが空かは、ScanCommand（読むだけ）で確かめる。apps/api/src は変えていない
 - 次への改善：管理 API のルートで直接入力の組み立てが変わると、スクリプトの組み立てとずれる（統合テストは入ることだけを確かめる）。ずれが問題になったら、管理 API の層に「直接入力の検証から保存まで」の関数（`submitApplication` に当たるもの）を取り出し、ルートとスクリプトの両方から呼ぶ
+
+### 2026-11-15 HP の dev サーバーで、Vite の中継が効かず、ウィジェットも描けなかった
+- 起きたこと：予約ウィジェット（packages/booking-widget）を作り、HP の予約ページ（`/reservation/`）に埋め込んだ。管理画面と同じく dev サーバーの中継（`/public` → http://localhost:8787）で公開 API につなごうとしたが、次の2つで詰まった。単体テスト（jsdom）はどちらも拾えず、ヘッドレスのブラウザで開いて分かった
+  - Astro の `vite.server.proxy` に書いた中継が効かなかった。Astro の dev サーバーは、末尾スラッシュの確かめ（`trailingSlash: "always"`）を Vite の中継より前に置くので、`/public/calendar?…` が中継の前に Astro の 404 になる。API のパスは末尾スラッシュなしで、API は変えない
+  - ウィジェットが描けなかった（`react-dom/client` に `createRoot` がない）。Astro の React の描画の部品が `/@fs/…` のパスで読まれ、その中の `react-dom/client` が前もってまとめられず、CommonJS のまま届いた（pnpm のワークスペースのため、と思われる）
+- ほかに：ウィジェットは依存の決まり（.dependency-cruiser.cjs）で packages/clock に依存できない。packages/clock にもまだ中身がないので、現在時刻はウィジェットの clock.ts の1か所で Luxon から取り、部品には関数として渡した（apps/api、apps/admin と同じ考え）
+- 足りなかったもの：ツール（HP を手元で開いて確かめる手段が、テストにも CI にもない）。ドキュメント（Astro の dev サーバーで中継する方法）
+- 足したもの：apps/site-zebra/astro.config.mjs に、`/public/…` を手元の API へ送る小さな Vite のプラグインを足した。Astro の部品のあと（`enforce: "post"`）に、中継をいちばん前に差し込む。`optimizeDeps.include` に `react-dom/client` を足した。README に HP を手元で開く手順を書いた
+- 次への改善：HP のビルド（`pnpm build`）は CI で動かしていないので、Astro の設定が壊れても気づけない。HP の画面が増えたら、ビルドと、ヘッドレスのブラウザで予約ページを開いてウィジェットが描けるかを確かめる E2E（TESTING.md の「E2Eテスト」）を CI に入れるかを考える。packages/clock に中身を入れるときは、ウィジェットに時計を渡す方法（依存の決まりを広げるか、HP の入口から渡すか）を決める

@@ -10,7 +10,11 @@
     "typecheck": "astro check"
   },
   "dependencies": {
-    "astro": "7.3.5"
+    "@astrojs/react": "7.1.9",
+    "@zebra/booking-widget": "workspace:*",
+    "astro": "7.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@astrojs/check": "0.9.10",
