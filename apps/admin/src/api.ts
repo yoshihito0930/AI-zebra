@@ -3,6 +3,13 @@
 // 手元では Vite の dev サーバーが /admin を API（http://localhost:8787）へ中継する（vite.config.ts）
 import {
   AdminApproveRequest,
+  AdminBlockCreated,
+  AdminBlockRequest,
+  AdminBufferRequest,
+  AdminChangeRequest,
+  AdminCustomerInfoRequest,
+  AdminDirectEntryAccepted,
+  AdminDirectEntryRequest,
   AdminEmptyRequest,
   AdminOperationAccepted,
   AdminReceiptLookup,
@@ -38,6 +45,23 @@ export interface AdminApi {
     id: string,
     operation: Exclude<AdminOperation, "approve">,
   ): Promise<ApiResult<AdminOperationAccepted>>;
+  /** 予約の変更（2回目a）。確認していない警告があれば 409（unacknowledged-warnings）と今の警告 */
+  change(id: string, request: AdminChangeRequest): Promise<ApiResult<AdminOperationAccepted>>;
+  /** 直接入力（2回目a）。成功は 201 と予約の id */
+  directEntry(request: AdminDirectEntryRequest): Promise<ApiResult<AdminDirectEntryAccepted>>;
+  /** バッファの切り替え（2回目b） */
+  changeBuffer(
+    id: string,
+    bufferMinutes: AdminBufferRequest["bufferMinutes"],
+  ): Promise<ApiResult<AdminOperationAccepted>>;
+  /** お客様の情報・撮影の内容の変更（2回目b）。全部の欄を送って置き換える。成功は 200（本文なし） */
+  updateCustomer(id: string, request: AdminCustomerInfoRequest): Promise<ApiResult<undefined>>;
+  /** ブロック枠を入れる（2回目a）。成功は 201 とブロック枠の id */
+  createBlock(request: AdminBlockRequest): Promise<ApiResult<AdminBlockCreated>>;
+  /** ブロック枠を直す（2回目a）。直すときも全部を送る。成功は 200（本文なし） */
+  updateBlock(id: string, request: AdminBlockRequest): Promise<ApiResult<undefined>>;
+  /** ブロック枠を消す（2回目a）。成功は 200（本文なし） */
+  deleteBlock(id: string): Promise<ApiResult<undefined>>;
 }
 
 /** パースに使うスキーマの形（Zod のスキーマが満たす） */
@@ -47,19 +71,36 @@ interface Schema<T> {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * 本文のない返事（ブロック枠を直す・消す、お客様の情報の変更。API は 200 と空の本文を返す）。
+ * 契約に返事の形がないので、本文がないことだけを確かめ、中身は使わない
+ */
+const NoBody: Schema<undefined> = {
+  safeParse: (value) =>
+    value === undefined ? { success: true, data: undefined } : { success: false },
+};
+
+type Method = "GET" | "POST" | "PUT" | "DELETE";
+
 /** fetch を受け取って、管理 API の呼び出しを作る（テストではモックの fetch を渡す） */
 export function createAdminApi(fetchFn: FetchLike, baseUrl = ""): AdminApi {
-  const call = async <T>(path: string, schema: Schema<T>, body?: unknown) => {
+  const send = async <T>(method: Method, path: string, schema: Schema<T>, body?: unknown) => {
     const init: RequestInit =
       body === undefined
-        ? { method: "GET", headers: { accept: "application/json" } }
+        ? { method, headers: { accept: "application/json" } }
         : {
-            method: "POST",
+            method,
             headers: { accept: "application/json", "content-type": "application/json" },
             body: JSON.stringify(body),
           };
     return request(fetchFn, `${baseUrl}${path}`, init, schema);
   };
+  /** 本文があれば POST、なければ GET */
+  const call = async <T>(path: string, schema: Schema<T>, body?: unknown) =>
+    send(body === undefined ? "GET" : "POST", path, schema, body);
+  const reservationPath = (id: string, rest = "") =>
+    `/admin/reservations/${encodeURIComponent(id)}${rest}`;
+  const blockPath = (id: string) => `/admin/blocks/${encodeURIComponent(id)}`;
 
   return {
     async listReservations(query) {
@@ -88,6 +129,44 @@ export function createAdminApi(fetchFn: FetchLike, baseUrl = ""): AdminApi {
         AdminOperationAccepted,
         AdminEmptyRequest.parse({}),
       );
+    },
+    async change(id, body) {
+      return call(
+        reservationPath(id, "/change"),
+        AdminOperationAccepted,
+        AdminChangeRequest.parse(body),
+      );
+    },
+    async directEntry(body) {
+      return call(
+        "/admin/reservations",
+        AdminDirectEntryAccepted,
+        AdminDirectEntryRequest.parse(body),
+      );
+    },
+    async changeBuffer(id, bufferMinutes) {
+      return call(
+        reservationPath(id, "/buffer"),
+        AdminOperationAccepted,
+        AdminBufferRequest.parse({ bufferMinutes }),
+      );
+    },
+    async updateCustomer(id, body) {
+      return send(
+        "PUT",
+        reservationPath(id, "/customer"),
+        NoBody,
+        AdminCustomerInfoRequest.parse(body),
+      );
+    },
+    async createBlock(body) {
+      return call("/admin/blocks", AdminBlockCreated, AdminBlockRequest.parse(body));
+    },
+    async updateBlock(id, body) {
+      return send("PUT", blockPath(id), NoBody, AdminBlockRequest.parse(body));
+    },
+    async deleteBlock(id) {
+      return send("DELETE", blockPath(id), NoBody);
     },
   };
 }

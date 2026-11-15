@@ -91,7 +91,8 @@ export const errorMessage: Record<AdminError, string> = {
   "not-pending": "承認待ちではないため、この操作はできません。画面を読み直してください。",
   "invalid-status": "今の状態の予約には、この操作はできません。画面を読み直してください。",
   "still-held": "まだ仮予約のまま重なっている仮予約が付いているため、繰り上げられません。",
-  "not-changeable": "今の状態の予約は変更できません。",
+  "not-changeable":
+    "今の状態の予約は変更できません（変更とバッファの切り替えは、承認済みの仮予約・本予約だけです）。画面を読み直してください。",
   "draft-not-unsent": "未送信の下書きではありません。",
   "google-calendar-block":
     "Googleカレンダーから取り込んだブロック枠は、直したり消したりできません。",
@@ -101,7 +102,8 @@ export const errorMessage: Record<AdminError, string> = {
   "longer-than-24-hours": "24時間を超える予約はできません。",
   "overlaps-existing": "ほかの予約・ブロック枠と重なっています。",
   "no-provisional-to-hold": "第二キープが付く仮予約がありません。",
-  "more-than-90-days": "ブロック枠は90日より先には入れられません。",
+  "more-than-90-days":
+    "ブロック枠がかかる日が90日を超えます（直すときは、直す前と直したあとを合わせて数えます）。分けて入れるか、消して入れ直してください。",
   busy: "混み合っています。少し待ってから、もう一度お試しください。",
 };
 

@@ -1,7 +1,9 @@
-// 予約の一覧（GET /admin/reservations）。期間と状態で絞り、予約とブロック枠を開始の早い順に表にする。行から詳細へ
+// 予約の一覧（GET /admin/reservations）。期間と状態で絞り、予約とブロック枠を開始の早い順に表にする。予約の行から詳細へ。
+// ブロック枠は、ここから入れる・直す・消す（ブロック枠の詳細のルートはないので、直すときは行の値を使う）
 import { HoldingReservationStatus, type AdminReservationList } from "@zebra/contracts";
 import { useEffect, useState, type FormEvent } from "react";
 import type { AdminApi } from "./api.ts";
+import { BlockDeleteConfirm, BlockForm } from "./BlockForm.tsx";
 import { compareByTime, formatTimeRange, formatYen } from "./format.ts";
 import { blockRouteLabel, failureMessage, reservationRouteLabel, statusLabel } from "./labels.ts";
 import { loadList, type ListFilter, type StatusFilter } from "./list.ts";
@@ -10,6 +12,10 @@ import { detailHref, navigate } from "./route.ts";
 type Reservation = AdminReservationList["reservations"][number];
 type Block = AdminReservationList["blocks"][number];
 type Row = { kind: "reservation"; item: Reservation } | { kind: "block"; item: Block };
+
+/** ブロック枠の操作：入れる、行のブロック枠を直す・消す */
+type BlockAction =
+  { kind: "create" } | { kind: "edit"; block: Block } | { kind: "delete"; block: Block };
 
 type LoadState =
   | { kind: "loading" }
@@ -33,6 +39,9 @@ export function ReservationListPage(props: {
   const { api, filter, onFilterChange } = props;
   const [draft, setDraft] = useState<ListFilter>(filter);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [reloadCount, setReloadCount] = useState(0);
+  const [blockAction, setBlockAction] = useState<BlockAction>();
+  const [notice, setNotice] = useState<string>();
 
   useEffect(() => setDraft(filter), [filter]);
 
@@ -50,7 +59,18 @@ export function ReservationListPage(props: {
     return () => {
       current = false;
     };
-  }, [api, filter]);
+  }, [api, filter, reloadCount]);
+
+  /** ブロック枠を入れた・直した・消したあと：閉じて、一覧を読み直す */
+  const onBlockSaved = (message: string) => {
+    setBlockAction(undefined);
+    setNotice(message);
+    setReloadCount((count) => count + 1);
+  };
+  const openBlockAction = (action: BlockAction | undefined) => {
+    setNotice(undefined);
+    setBlockAction(action);
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -113,12 +133,36 @@ export function ReservationListPage(props: {
           一覧に出るのは、枠を確保している予約（承認待ち・仮予約・本予約・第二キープ）とブロック枠です。取消・終了した予約は、受付番号から開いてください。期間は最長62日です。
         </small>
       </p>
-      <ListBody state={state} />
+      {blockAction?.kind !== "create" && (
+        <p>
+          <button type="button" onClick={() => openBlockAction({ kind: "create" })}>
+            ブロック枠を入れる…
+          </button>
+        </p>
+      )}
+      {notice !== undefined && <p role="status">{notice}</p>}
+      {blockAction?.kind === "create" && (
+        <BlockForm api={api} onSaved={onBlockSaved} onCancel={() => openBlockAction(undefined)} />
+      )}
+      <ListBody
+        api={api}
+        state={state}
+        blockAction={blockAction}
+        onBlockAction={openBlockAction}
+        onBlockSaved={onBlockSaved}
+      />
     </section>
   );
 }
 
-function ListBody({ state }: { state: LoadState }) {
+function ListBody(props: {
+  api: AdminApi;
+  state: LoadState;
+  blockAction: BlockAction | undefined;
+  onBlockAction: (action: BlockAction | undefined) => void;
+  onBlockSaved: (message: string) => void;
+}) {
+  const { api, state, blockAction, onBlockAction, onBlockSaved } = props;
   if (state.kind === "loading") return <p>読み込み中…</p>;
   if (state.kind === "failed") return <p role="alert">{state.message}</p>;
 
@@ -146,6 +190,7 @@ function ListBody({ state }: { state: LoadState }) {
             <th>バッファ</th>
             <th>経路</th>
             <th>受付番号</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -153,7 +198,20 @@ function ListBody({ state }: { state: LoadState }) {
             row.kind === "reservation" ? (
               <ReservationRow key={`r-${row.item.id}`} reservation={row.item} />
             ) : (
-              <BlockRow key={`b-${row.item.id}`} block={row.item} />
+              <BlockRows
+                key={`b-${row.item.id}`}
+                api={api}
+                block={row.item}
+                action={
+                  blockAction !== undefined &&
+                  blockAction.kind !== "create" &&
+                  blockAction.block.id === row.item.id
+                    ? blockAction.kind
+                    : undefined
+                }
+                onAction={onBlockAction}
+                onSaved={onBlockSaved}
+              />
             ),
           )}
         </tbody>
@@ -177,22 +235,61 @@ function ReservationRow({ reservation: r }: { reservation: Reservation }) {
       <td>{r.bufferMinutes}分</td>
       <td>{reservationRouteLabel[r.route]}</td>
       <td>{r.receiptNumber ?? "—"}</td>
+      <td></td>
     </tr>
   );
 }
 
-function BlockRow({ block: b }: { block: Block }) {
+const COLUMN_COUNT = 10;
+
+/** ブロック枠の行と、直す・消すを開いたときのフォームの行 */
+function BlockRows(props: {
+  api: AdminApi;
+  block: Block;
+  action: "edit" | "delete" | undefined;
+  onAction: (action: BlockAction | undefined) => void;
+  onSaved: (message: string) => void;
+}) {
+  const { api, block: b, action, onAction, onSaved } = props;
+  // Googleカレンダーから取り込んだブロック枠は、取り込みで更新するので、直す・消すを出さない（booking.md「ブロック枠を消す・直す」）
+  const editable = b.route === "admin";
+  const close = () => onAction(undefined);
   return (
-    <tr>
-      <td>{formatTimeRange(b.start, b.end)}</td>
-      <td>ブロック枠</td>
-      <td>{b.memo ?? "—"}</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>{b.bufferMinutes}分</td>
-      <td>{blockRouteLabel[b.route]}</td>
-      <td>—</td>
-    </tr>
+    <>
+      <tr>
+        <td>{formatTimeRange(b.start, b.end)}</td>
+        <td>ブロック枠</td>
+        <td>{b.memo ?? "—"}</td>
+        <td>—</td>
+        <td>—</td>
+        <td>—</td>
+        <td>{b.bufferMinutes}分</td>
+        <td>{blockRouteLabel[b.route]}</td>
+        <td>—</td>
+        <td>
+          {editable && action === undefined && (
+            <>
+              <button type="button" onClick={() => onAction({ kind: "edit", block: b })}>
+                直す…
+              </button>{" "}
+              <button type="button" onClick={() => onAction({ kind: "delete", block: b })}>
+                消す…
+              </button>
+            </>
+          )}
+        </td>
+      </tr>
+      {action !== undefined && (
+        <tr>
+          <td colSpan={COLUMN_COUNT}>
+            {action === "edit" ? (
+              <BlockForm api={api} block={b} onSaved={onSaved} onCancel={close} />
+            ) : (
+              <BlockDeleteConfirm api={api} block={b} onDeleted={onSaved} onCancel={close} />
+            )}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

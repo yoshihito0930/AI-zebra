@@ -4,10 +4,11 @@ import { useState } from "react";
 import type { AdminApi } from "./api.ts";
 import { monthOf } from "./format.ts";
 import type { ListFilter } from "./list.ts";
+import { DirectEntryPage } from "./DirectEntryPage.tsx";
 import { ReceiptSearch } from "./ReceiptSearch.tsx";
 import { ReservationDetailPage } from "./ReservationDetailPage.tsx";
 import { ReservationListPage } from "./ReservationListPage.tsx";
-import { detailHref, navigate, parseRoute, useHash } from "./route.ts";
+import { detailHref, directEntryHref, listHref, navigate, parseRoute, useHash } from "./route.ts";
 
 export function App(props: { api: AdminApi; now: () => DateTime }) {
   const { api, now } = props;
@@ -26,12 +27,19 @@ export function App(props: { api: AdminApi; now: () => DateTime }) {
         <p>
           <small>手元の開発用（ログインなし）</small>
         </p>
+        <nav aria-label="画面">
+          <a href={listHref()}>予約の一覧</a> ・ <a href={directEntryHref()}>予約を直接入れる</a>
+        </nav>
         <ReceiptSearch api={api} onFound={(id) => navigate(detailHref(id))} />
       </header>
       <main>
-        {route.page === "detail" ? (
+        {route.page === "detail" && (
           <ReservationDetailPage api={api} reservationId={route.reservationId} />
-        ) : (
+        )}
+        {route.page === "direct-entry" && (
+          <DirectEntryPage api={api} onCreated={(id) => navigate(detailHref(id))} />
+        )}
+        {route.page === "list" && (
           <ReservationListPage api={api} filter={filter} onFilterChange={setFilter} />
         )}
       </main>
