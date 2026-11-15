@@ -18,6 +18,7 @@
 | `pnpm test` | 単体テスト |
 | `pnpm db:up` / `pnpm db:down` | ローカルの DynamoDB（Docker）の起動・停止 |
 | `pnpm db:table` | ローカルの DynamoDB に、手元で API を動かすためのテーブルを作る（先に `pnpm db:up`） |
+| `pnpm db:demo` | `pnpm db:table` で作ったテーブルに、デモ用の架空の予約を入れる（「デモのデータ」の節） |
 | `pnpm test:int` | 統合テスト（先に `pnpm db:up`） |
 | `pnpm build` | すべてのアプリをビルド |
 | `pnpm dev:site` | HP（http://localhost:4321/） |
@@ -47,6 +48,25 @@ pnpm db:table
 DEV_ADMIN_USER_ID=dev-admin DYNAMODB_TABLE_NAME=zebra-local DYNAMODB_ENDPOINT=http://localhost:8000 pnpm dev:api
 ```
 
+## デモのデータ
+
+管理画面を手元で触るときに、一覧に予約が並んでいる状態を作る。`pnpm db:demo`（`apps/api/scripts/demo-data.ts`）は、テーブルに架空の予約を入れる。
+
+```sh
+pnpm db:up
+pnpm db:table
+pnpm db:demo
+DEV_ADMIN_USER_ID=dev-admin DYNAMODB_TABLE_NAME=zebra-local DYNAMODB_ENDPOINT=http://localhost:8000 pnpm dev:api
+pnpm dev:admin   # 別のターミナルで（管理画面）
+```
+
+- 入るもの：動かした日（JST）の翌日から来月の末日までに散らばる、承認待ち（仮・本・第二キープ）、承認済みの仮予約・本予約、仮予約に付いた第二キープ（承認済み・承認待ち）、深夜帯にかかる予約、日をまたぐ予約、休業のブロック枠、取消した予約。フォームからの申込（受付番号つき）と、管理者の直接入力の両方。入れた予約の一覧（日時・状態・氏名・受付番号）を表示する
+- 本番と同じ処理（申込の処理、操作・直接入力・ブロック枠の保存）で入れる。締め切りや空き判定で入らない日は、1日ずつ後ろにずらす
+- 氏名・連絡先・撮影内容はすべて架空のもの
+- 何度動かしてもよい：テーブルが空のときだけ入れる。空でなければ（前に入れたデモのデータや、手で入れた予約がある）何も入れずに知らせる。入れ直すときは、`pnpm db:down` → `pnpm db:up` → `pnpm db:table` のあとに動かすか、別のテーブルの名前（`DYNAMODB_TABLE_NAME=zebra-demo2 pnpm db:table` と `DYNAMODB_TABLE_NAME=zebra-demo2 pnpm db:demo`。`pnpm dev:api` にも同じ名前を渡す）を使う
+- テーブルがなければ、`pnpm db:table` を先に動かすよう表示して止まる。接続先が手元（localhost・127.0.0.1）でなければ何もしない
+- 読む環境変数は `pnpm db:table` と同じ（`DYNAMODB_ENDPOINT`・`DYNAMODB_TABLE_NAME`。省略なら `http://127.0.0.1:8000` と `zebra-local`）。履歴の「誰が」は `DEV_ADMIN_USER_ID`（省略なら `dev-admin`）
+
 ## 管理画面を手元で開く
 
 管理画面（apps/admin）は、手元の API に Vite の dev サーバーの中継（`/admin` → http://localhost:8787）でつなぐ。ログイン（Cognito）はまだなく、API の `DEV_ADMIN_USER_ID` の管理者として動く。
@@ -54,7 +74,7 @@ DEV_ADMIN_USER_ID=dev-admin DYNAMODB_TABLE_NAME=zebra-local DYNAMODB_ENDPOINT=ht
 1. 上の手順で API を起動する（`pnpm db:up` → `pnpm db:table` → `DEV_ADMIN_USER_ID=dev-admin … pnpm dev:api`）
 2. 別のターミナルで `pnpm dev:admin` を動かし、http://localhost:5174/ を開く
 
-予約の一覧（期間・状態で絞る）、予約の詳細、承認・却下・昇格・取消・繰り上げ、受付番号から探す、ができる。テーブルが空なら、公開API（`POST /public/applications`）で架空の申込を入れるか、管理 API（`POST /admin/blocks`）でブロック枠を入れる。メールの下書きを開く画面は、まだない。
+予約の一覧（期間・状態で絞る）、予約の詳細、承認・却下・昇格・取消・繰り上げ、受付番号から探す、ができる。テーブルが空なら、上の `pnpm db:demo` で架空の予約を入れる。メールの下書きを開く画面は、まだない。
 
 ## 変更の流れ
 

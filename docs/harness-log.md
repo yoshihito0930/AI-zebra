@@ -170,3 +170,8 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足したもの：vitest.config.ts の対象を `*.test.{ts,tsx}` に広げた。DOM の要るテストは、ファイルの先頭の `// @vitest-environment jsdom` で jsdom で動かす。apps/admin の devDependencies に Testing Library と jsdom を足した。test-tamper と spec-coverage は、もとから `.tsx` のテストも数える
 - 次への改善：画面のテストが増えたら、apps ごとの Vitest の projects に分けるかを考える（今はファイルごとの指定で足りる）。packages/clock に中身を入れるときは、apps/api の app.ts と apps/admin の main.tsx の2か所を置き換える
 
+### 2026-11-15 デモのデータを入れるスクリプトで、「本番と同じ流れ」の入口が層ごとに違った
+- 起きたこと：管理画面を手元で触るためのデモのデータのスクリプト（`pnpm db:demo`）を作った。保存の層（apps/api/src/db）の関数を呼んで入れる方針だったが、フォームの申込の保存（`saveApplication`）は締め切り・見積・受付番号を扱わず、それらは公開 API の層（`submitApplication`）にある。直接入力の見積とプランの決め方は、管理 API のルート（routes.ts）の中に書かれていて、関数として取り出せない。テーブルが空か（2回目の動き）を確かめる関数も保存の層にない
+- 足りなかったもの：ツール（「API の検証から保存まで」を、HTTP を通さずに呼べる入口が、申込にはあるが直接入力にはない）
+- 足したもの：フォームの申込は `submitApplication` を呼び、直接入力は管理 API のルートと同じ組み立て（`checkAdminDuration` → `decidePlanId` → `calculatePriceFromTable` → `saveDirectEntry`）をスクリプトに書いた。テーブルが空かは、ScanCommand（読むだけ）で確かめる。apps/api/src は変えていない
+- 次への改善：管理 API のルートで直接入力の組み立てが変わると、スクリプトの組み立てとずれる（統合テストは入ることだけを確かめる）。ずれが問題になったら、管理 API の層に「直接入力の検証から保存まで」の関数（`submitApplication` に当たるもの）を取り出し、ルートとスクリプトの両方から呼ぶ
