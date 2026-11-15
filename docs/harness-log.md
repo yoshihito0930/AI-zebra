@@ -158,3 +158,9 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足したもの：なし。今回はテストの中身に影響がなく、テストのレビュー（人間）が歯止めになる
 - 次への改善：同じことが続くなら、テスト担当のフックで、パスを絞らない grep・rg（`apps/`・`packages/` の実装を含むもの）を止めるかを考える
 
+### 2026-11-15 管理画面の部品のテストを、ルートの Vitest の設定が拾わなかった
+- 起きたこと：管理画面の最初の形（一覧・詳細・操作・受付番号から探す）を作った。React の部品のテストは `*.test.tsx` になるが、ルートの vitest.config.ts の対象は `*.test.ts` だけで、DOM のある環境（jsdom）の設定もなかった。ほかに、撮影内容（`ShootingType`）は契約にスキーマだけがあって型の export がなく、画面の呼び名の表では値を書き並べた。packages/clock はまだ中身がないので、管理画面の現在時刻は apps/api と同じく入口（main.tsx）の1か所で Luxon から取り、部品には関数として渡した
+- 足りなかったもの：ツール（画面の部品のテストの置き場所と動かし方）
+- 足したもの：vitest.config.ts の対象を `*.test.{ts,tsx}` に広げた。DOM の要るテストは、ファイルの先頭の `// @vitest-environment jsdom` で jsdom で動かす。apps/admin の devDependencies に Testing Library と jsdom を足した。test-tamper と spec-coverage は、もとから `.tsx` のテストも数える
+- 次への改善：画面のテストが増えたら、apps ごとの Vitest の projects に分けるかを考える（今はファイルごとの指定で足りる）。packages/clock に中身を入れるときは、apps/api の app.ts と apps/admin の main.tsx の2か所を置き換える
+
