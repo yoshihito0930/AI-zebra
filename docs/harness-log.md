@@ -175,3 +175,10 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足りなかったもの：ツール（「API の検証から保存まで」を、HTTP を通さずに呼べる入口が、申込にはあるが直接入力にはない）
 - 足したもの：フォームの申込は `submitApplication` を呼び、直接入力は管理 API のルートと同じ組み立て（`checkAdminDuration` → `decidePlanId` → `calculatePriceFromTable` → `saveDirectEntry`）をスクリプトに書いた。テーブルが空かは、ScanCommand（読むだけ）で確かめる。apps/api/src は変えていない
 - 次への改善：管理 API のルートで直接入力の組み立てが変わると、スクリプトの組み立てとずれる（統合テストは入ることだけを確かめる）。ずれが問題になったら、管理 API の層に「直接入力の検証から保存まで」の関数（`submitApplication` に当たるもの）を取り出し、ルートとスクリプトの両方から呼ぶ
+
+### 2026-11-15 手元の lint が、ほかのエージェントの作業ツリーのファイルで落ちた
+- 起きたこと：エージェントを worktree で並行に動かしたとき、メインの作業ツリーで動かした `pnpm lint` が、`.claude/worktrees/` の下にある別のエージェントの作業中のファイル（管理画面の部品）で落ちた。そのブランチのファイルではないので、直すことができなかった
+- 足りなかったもの：lint（eslint の flat config は .gitignore を読まないので、gitignore に入れた `.claude/worktrees/` も対象になっていた）
+- 足したもの：共通の eslint の設定（tooling/eslint-config）の ignores に `.claude/worktrees/**` を足した。Vitest・spec-coverage は対象のフォルダー（apps・packages・tooling・scripts）を絞っているので、もともと読まない。prettier は .gitignore を読む
+- 次への改善：ルートから全体を見るツールを足すときは、`.claude/worktrees/` を読まないことを確かめる
+
