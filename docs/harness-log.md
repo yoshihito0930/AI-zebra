@@ -182,3 +182,8 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足したもの：共通の eslint の設定（tooling/eslint-config）の ignores に `.claude/worktrees/**` を足した。Vitest・spec-coverage は対象のフォルダー（apps・packages・tooling・scripts）を絞っているので、もともと読まない。prettier は .gitignore を読む
 - 次への改善：ルートから全体を見るツールを足すときは、`.claude/worktrees/` を読まないことを確かめる
 
+### 2026-11-15 ほかのエージェントの作業ツリーがあると、手元の pnpm check と pnpm test:int が落ちる
+- 起きたこと：管理 API の3回目の実装の PR で、手元の `pnpm check` が `pnpm deps`（dependency-cruiser）で 165 件の違反を出して止まった。違反はどれも `.claude/worktrees/`（ほかのエージェントの作業ツリー。git では無視している）の中のファイルで、そこには node_modules がないので import を解決できない（not-to-unresolvable）。自分のブランチのファイルの違反は 0 件だった。lint・format・typecheck・test・spec-coverage は1つずつ動かして通した。また、`pnpm test:int` を全部動かすと、触っていない統合テスト（公開API の予約状況、2回目b のルートなど）が 15 秒のタイムアウトで 8 件落ちた。そのとき、ほかの作業ツリーでもテストが動いていて、1つのローカルの DynamoDB（`-sharedDb`）を一緒に使っていた。落ちたテストは、1つずつ動かすと 1 秒ほどで通った
+- 足りなかったもの：ツール（dependency-cruiser の対象から `.claude/worktrees/` を外していない。統合テストのタイムアウトと、ローカルの DynamoDB は、作業ツリーが1つの前提）
+- 足したもの：なし（設定の変更は、この PR の範囲の外）
+- 次への改善：`.dependency-cruiser.cjs` の対象から `.claude/worktrees/` を外す。同時に動く作業ツリーが続くなら、作業ツリーごとに DynamoDB Local のポートを分けるか、統合テストのタイムアウトを延ばすかを決める
