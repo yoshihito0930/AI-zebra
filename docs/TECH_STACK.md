@@ -18,7 +18,7 @@
 | APIの入口 | API Gateway HTTP API | REST APIより安い。JWT認証に対応 |
 | DB | DynamoDB（オンデマンド） | 使った分だけの課金。予約件数が少ないので安い |
 | 認証 | Cognito（管理画面のスタッフのみ） | 自前で認証を作らない |
-| メール | SES | 安い。お客様への送信は管理者の確認後のみ（定型の受付通知を除く。INV-6）。管理者への新しい申込の通知にも使う |
+| メール | SES | 安い。お客様への定型の受付通知（INV-6 の例外）と、管理者への新しい申込の通知に使う。それ以外のお客様へのメールは、管理者が下書きを確かめて Gmail から送る（[mail.md](product-specs/mail.md)） |
 | 定期実行 | EventBridge Scheduler → Lambda | Googleカレンダーの取り込み（1日1回）。常時起動しない（INV-8） |
 | 外部連携 | Google Calendar API（v1は読み取りのみ。書き込みはv1のあと） | 並行稼働の間の予約の取り込み。認証情報は SSM Parameter Store（SecureString）に置く（INV-8）。GCPで別の仕組みを作らず、AWSとTerraformにまとめる |
 | スキーマ・契約 | Zod（packages/contracts） | API・ウィジェット・管理画面で同じ型を使う |
@@ -99,7 +99,8 @@ AWS Budgetsで月額のアラートを設定する。
 
 ### メールの送信元
 
-- お客様へのメールは `noreply@studiozebra-1st.com` から SES で送る。返信先（Reply-To）は `studiozebra1st@gmail.com`
+- 受付通知は `noreply@studiozebra-1st.com` から SES で送る。返信先（Reply-To）は `studiozebra1st@gmail.com`
+- 受付通知以外のお客様へのメール（承認・取消などの下書き）は、管理者が `studiozebra1st@gmail.com` から送る（[mail.md](product-specs/mail.md)）
 
 理由：独自ドメインで DKIM 署名すると届きやすい。Gmail のアドレスを差出人にして SES から送ると、DMARC で弾かれやすい。受信用のメールボックスは要らない。
 

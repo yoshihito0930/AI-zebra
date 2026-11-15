@@ -86,6 +86,7 @@ import {
   getReservation,
 } from "../db/reservations.ts";
 import type { AdminUserIdSource } from "./admin-user.ts";
+import type { MailSettings } from "../mail/settings.ts";
 
 export interface AdminDeps {
   store: ReservationStore;
@@ -97,6 +98,8 @@ export interface AdminDeps {
   adminUserId: AdminUserIdSource;
   /** 操作の保存のやり直しの設定（混み合ったときの確認に使う）。どの操作の保存（変更・直接入力・ブロック枠を含む）にも渡す */
   save?: Pick<SaveOperationOptions, "maxAttempts" | "beforeWrite">;
+  /** 下書きの文面に差し込む担当者名と署名（3回目。admin-api.md「担当者名と署名の設定」） */
+  mail?: MailSettings;
 }
 
 /** 一覧の期間の最長（JST の日。両端を含む。admin-api.md「予約の一覧」） */
@@ -530,6 +533,7 @@ function statusOf(error: AdminError): 400 | 401 | 404 | 409 | 422 | 503 {
     case "invalid-status":
     case "still-held":
     case "not-changeable":
+    case "draft-not-unsent":
     case "google-calendar-block":
     case "unacknowledged-warnings":
       return 409;
