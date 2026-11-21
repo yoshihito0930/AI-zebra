@@ -84,10 +84,20 @@ pnpm dev:admin   # 別のターミナルで（管理画面）
 
 ## HP を手元で開く
 
-HP（apps/site-zebra）の予約ページ（`/reservation/`）には、予約ウィジェット（packages/booking-widget。カレンダーと申込フォーム）が入っている。ウィジェットは、手元の公開 API に Astro（Vite）の dev サーバーの中継（`/public` → http://localhost:8787）でつなぐ。
+HP（apps/site-zebra）の予約ページ（`/reservation/`）に何を出すかは、組み立て（`pnpm dev:site`・`pnpm build`）のときの環境変数 `PUBLIC_BOOKING_WIDGET_ENABLED` で決める（機能フラグ。[docs/product-specs/index.md](docs/product-specs/index.md) の「リリースの進め方」の手順2と4）。
+
+| `PUBLIC_BOOKING_WIDGET_ENABLED` | 予約ページに出すもの |
+|---|---|
+| ない・空・`false` | 今の仕組み（Googleカレンダーの埋め込みと、form.run の予約フォームへのリンク。今の HP から写したもの）。API は要らない |
+| `true` | 予約ウィジェット（packages/booking-widget。カレンダーと申込フォーム） |
+| それ以外（`TRUE`、`1` など） | 組み立てを止める（打ち間違いで、思っていたのと逆のページを出さないため） |
+
+何も付けずに `pnpm dev:site` を動かすと、今の仕組みが出る。ウィジェットを触るときは、`pnpm dev:site` の前に変数を付ける（`.env.development` には書かない。`.env.*` は秘密情報を入れないよう git で無視しているので、書いても共有されず、何も付けないときに今の仕組みが出る、が人によって変わるため）。変数は dev サーバーを起動するときに読むので、切り替えるときは dev サーバーを止めて（`Ctrl+C`）から動かし直す。止めずにもう一度動かすと、Astro は「Dev server already running」と出して、前の dev サーバー（前の値のまま）を使い続ける。
+
+ウィジェットは、手元の公開 API に Astro（Vite）の dev サーバーの中継（`/public` → http://localhost:8787）でつなぐ。
 
 1. 上の手順で API を起動する（`pnpm db:up` → `pnpm db:table` → `pnpm db:demo` → `DEV_ADMIN_USER_ID=dev-admin … pnpm dev:api`）。カレンダーに予約を並べたいときは `pnpm db:demo` で架空の予約を入れる
-2. 別のターミナルで `pnpm dev:site` を動かし、http://localhost:4321/reservation/ を開く（トップページ http://localhost:4321/ からもリンクがある）
+2. 別のターミナルで `PUBLIC_BOOKING_WIDGET_ENABLED=true pnpm dev:site` を動かし、http://localhost:4321/reservation/ を開く（トップページ http://localhost:4321/ からもリンクがある）
 
 カレンダーで予約状況（表示名と時間）を見て、申込フォームから申込める。申込むと、管理画面（`pnpm dev:admin`）の一覧に承認待ちとして出る。API を起動していなければ、カレンダーは「読み込めませんでした」と出す。本番での HP と API のつなぎ方（同じオリジンにするか、など）は、AWS の準備のときに決める。
 
@@ -117,7 +127,7 @@ HP（apps/site-zebra）の予約ページ（`/reservation/`）には、予約ウ
 
    `pnpm db:demo` は、動かした日の翌日から来月の末日までに、架空の予約とブロック枠を入れ、その一覧を表示する（受付番号もここに出る）。
 2. ターミナル2：`pnpm dev:admin` を動かし、http://localhost:5174/ を開く（管理画面）
-3. ターミナル3：`pnpm dev:site` を動かし、http://localhost:4321/reservation/ を開く（お客様の画面）
+3. ターミナル3：`PUBLIC_BOOKING_WIDGET_ENABLED=true pnpm dev:site` を動かし、http://localhost:4321/reservation/ を開く（お客様の画面。変数を付けないと、予約ウィジェットではなく今の仕組みが出る。「HP を手元で開く」）
 
 ### 確かめること
 
