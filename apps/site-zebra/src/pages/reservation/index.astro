@@ -2,11 +2,13 @@
 // ご予約・お問い合わせ（docs/product-specs/index.md の HP の表の /reservation/）。
 // 予約受付の開始までは今の仕組み（Googleカレンダーの埋め込みと form.run の予約フォーム）、開始後は予約ウィジェット（カレンダーと申込フォーム）を出す。
 // どちらを出すかは、組み立てのときの環境変数 PUBLIC_BOOKING_WIDGET_ENABLED で決める（src/booking-widget-flag.ts）。ない・空なら今の仕組み。
+// 連絡先（StudioContacts）は、どちらのときも出す（有効のときはウィジェットの下）。今の仕組みの「ご予約についての注意事項」は、有効のときには出さない。
 // 見た目はデザイン（docs/DESIGN.md）が決まってから作る。
 // ウィジェットは現在時刻で今月を決め、ブラウザで予約状況を読むので、ブラウザだけで描く（client:only。ビルドの時刻で描かない）
 import { BookingWidget } from "@zebra/booking-widget";
 import { isBookingWidgetEnabled } from "../../booking-widget-flag";
 import LegacyReservation from "../../components/LegacyReservation.astro";
+import StudioContacts from "../../components/StudioContacts.astro";
 
 const bookingWidgetEnabled = isBookingWidgetEnabled(import.meta.env.PUBLIC_BOOKING_WIDGET_ENABLED);
 ---
@@ -29,6 +31,8 @@ const bookingWidgetEnabled = isBookingWidgetEnabled(import.meta.env.PUBLIC_BOOKI
           <noscript>
             <p>予約カレンダーと申込フォームを使うには、JavaScript を有効にしてください。</p>
           </noscript>
+          <h2>お問い合わせ</h2>
+          <StudioContacts />
         </>
       ) : (
         <LegacyReservation />

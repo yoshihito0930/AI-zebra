@@ -6,9 +6,13 @@
 // - 文字ではなく画像だった見出し（「RESERVATION」「contact」）は写さない。画像のボタンは、画像の説明の文字（ない・「RESERVATION」だけのものは、
 //   すぐ前の文の言葉）のリンクにした
 // - 康熙部首の文字（`⽇`〈U+2F47〉など。見た目は普通の漢字）は、普通の漢字に置き換えた（docs/harness-log.md）
-// - 電話番号は、公開してよいかを人間に確かめるまで「（電話番号）」の印にした（このリポジトリは公開する）
+// - 連絡先（お問い合わせフォーム・LINE・メール・電話）は、ウィジェットを有効にしたあとも出すので、別の部品（StudioContacts）にした。
+//   電話番号はリポジトリに書かず、組み立てのときの環境変数 PUBLIC_STUDIO_TEL で渡す
 // - 色付きの強調（span）は strong にした。スマホ・PC だけの改行（br.sp・br.pc）は外した
-// 予約の決まり（docs/product-specs/booking.md）との食い違いは、今の仕組みの説明なので直さない
+// 予約の決まり（docs/product-specs/booking.md）との食い違いは、今の仕組みの説明なので直さない。
+// 「ご予約についての注意事項」は、ウィジェットを有効にしたら出さない（予約受付の開始の前に、新しい予約の決まりに合わせて書き直す。
+// docs/product-specs/index.md の「リリースの進め方」の手順4）
+import StudioContacts from "./StudioContacts.astro";
 ---
 
 <p>「<strong><a href="/policy/">利用規約</a></strong>」の内容をご確認のうえ、ご予約をお願いいたします。</p>
@@ -70,16 +74,8 @@
   <li>
     <a href="https://form.run/@studiozebra-1st-reservation" target="_blank" rel="noopener">ご予約フォームはこちら</a>
   </li>
-  <li>
-    <a href="https://form.run/@studiozebra-st-inquiry" target="_blank" rel="noopener">お問い合わせフォームはこちら</a>
-  </li>
 </ul>
-<ul>
-  <li>（電話番号）</li>
-  <li>
-    <a href="https://line.me/R/ti/p/%40190bnuvc" target="_blank" rel="noopener">LINEでのご予約・お問合わせ</a>
-  </li>
-</ul>
+<StudioContacts />
 
 <h2>ご予約についての注意事項</h2>
 <h3>仮予約につきまして</h3>

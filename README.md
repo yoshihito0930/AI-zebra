@@ -84,15 +84,22 @@ pnpm dev:admin   # 別のターミナルで（管理画面）
 
 ## HP を手元で開く
 
-HP（apps/site-zebra）の予約ページ（`/reservation/`）に何を出すかは、組み立て（`pnpm dev:site`・`pnpm build`）のときの環境変数 `PUBLIC_BOOKING_WIDGET_ENABLED` で決める（機能フラグ。[docs/product-specs/index.md](docs/product-specs/index.md) の「リリースの進め方」の手順2と4）。
+HP（apps/site-zebra）は、組み立て（`pnpm dev:site`・`pnpm build`）のときに、次の環境変数を読む。本番の値は、AWS の準備のときに HP の組み立ての設定に入れる（リポジトリには書かない）。
+
+| 環境変数 | 内容 |
+|---|---|
+| `PUBLIC_BOOKING_WIDGET_ENABLED` | 予約ページ（`/reservation/`）に予約ウィジェットを出すか（機能フラグ。[docs/product-specs/index.md](docs/product-specs/index.md) の「リリースの進め方」の手順2と4）。値は下の表 |
+| `PUBLIC_STUDIO_TEL` | 予約ページの連絡先に出すスタジオの電話番号（数字とハイフン。先頭に `+` を付けてよい）。ない・空なら電話番号の行を出さない。本物の番号はリポジトリに書かず、手元では架空の値（例：`000-0000-0000`）を使う。番号でない値なら組み立てを止める |
 
 | `PUBLIC_BOOKING_WIDGET_ENABLED` | 予約ページに出すもの |
 |---|---|
-| ない・空・`false` | 今の仕組み（Googleカレンダーの埋め込みと、form.run の予約フォームへのリンク。今の HP から写したもの）。API は要らない |
-| `true` | 予約ウィジェット（packages/booking-widget。カレンダーと申込フォーム） |
+| ない・空・`false` | 今の仕組み（Googleカレンダーの埋め込みと、form.run の予約フォームへのリンク、ご予約についての注意事項。今の HP から写したもの）と連絡先。API は要らない |
+| `true` | 予約ウィジェット（packages/booking-widget。カレンダーと申込フォーム）と、その下に連絡先。注意事項は出さない（予約受付の開始の前に書き直す） |
 | それ以外（`TRUE`、`1` など） | 組み立てを止める（打ち間違いで、思っていたのと逆のページを出さないため） |
 
-何も付けずに `pnpm dev:site` を動かすと、今の仕組みが出る。ウィジェットを触るときは、`pnpm dev:site` の前に変数を付ける（`.env.development` には書かない。`.env.*` は秘密情報を入れないよう git で無視しているので、書いても共有されず、何も付けないときに今の仕組みが出る、が人によって変わるため）。変数は dev サーバーを起動するときに読むので、切り替えるときは dev サーバーを止めて（`Ctrl+C`）から動かし直す。止めずにもう一度動かすと、Astro は「Dev server already running」と出して、前の dev サーバー（前の値のまま）を使い続ける。
+連絡先は、お問い合わせフォーム（form.run）・LINE・メールアドレス・電話番号（`PUBLIC_STUDIO_TEL` があるとき）。
+
+何も付けずに `pnpm dev:site` を動かすと、今の仕組みが出る（電話番号の行は出ない）。ウィジェットや電話番号を触るときは、`pnpm dev:site` の前に変数を付ける（例：`PUBLIC_BOOKING_WIDGET_ENABLED=true PUBLIC_STUDIO_TEL=000-0000-0000 pnpm dev:site`。`.env.development` には書かない。`.env.*` は秘密情報を入れないよう git で無視しているので、書いても共有されず、何も付けないときに今の仕組みが出る、が人によって変わるため）。変数は dev サーバーを起動するときに読むので、切り替えるときは dev サーバーを止めて（`Ctrl+C`）から動かし直す。止めずにもう一度動かすと、Astro は「Dev server already running」と出して、前の dev サーバー（前の値のまま）を使い続ける。
 
 ウィジェットは、手元の公開 API に Astro（Vite）の dev サーバーの中継（`/public` → http://localhost:8787）でつなぐ。
 

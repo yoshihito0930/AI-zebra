@@ -1,0 +1,28 @@
+---
+// 予約ページの連絡先（お問い合わせフォーム・LINE・メール・電話）。予約ウィジェットの有効・無効にかかわらず出す
+// （有効のときはウィジェットの下。docs/product-specs/index.md の HP の「ページ構成」）。見出しは、出すページの側で付ける。
+// お問い合わせフォームと LINE の文字は、今の HP の予約ページの画像のボタンの説明から写した。メールアドレスの前の言葉も、今の予約ページの文から写した。
+// 電話番号は組み立てのときの環境変数 PUBLIC_STUDIO_TEL で渡す（src/studio-tel.ts）。ない・空なら電話番号の行を出さない
+import { parseStudioTel } from "../studio-tel";
+
+const tel = parseStudioTel(import.meta.env.PUBLIC_STUDIO_TEL);
+---
+
+<ul>
+  <li>
+    <a href="https://form.run/@studiozebra-st-inquiry" target="_blank" rel="noopener">お問い合わせフォームはこちら</a>
+  </li>
+  <li>
+    <a href="https://line.me/R/ti/p/%40190bnuvc" target="_blank" rel="noopener">LINEでのご予約・お問合わせ</a>
+  </li>
+  <li>
+    スタジオのメールアドレス：<a href="mailto:studiozebra1st@gmail.com">studiozebra1st@gmail.com</a>
+  </li>
+  {
+    tel && (
+      <li>
+        TEL：<a href={tel.href}>{tel.label}</a>
+      </li>
+    )
+  }
+</ul>
