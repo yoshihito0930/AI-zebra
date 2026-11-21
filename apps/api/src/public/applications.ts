@@ -31,6 +31,8 @@ import {
   type ShootingInfo,
   saveApplication,
 } from "../db/reservations.ts";
+import type { MailSender } from "../mail/sender.ts";
+import type { MailSettings } from "../mail/settings.ts";
 
 /** 申込の処理が使うもの。テストで固定・差し替えできるように、外から渡す */
 export interface ApplicationDeps {
@@ -53,6 +55,13 @@ export interface ApplicationDeps {
     readonly maxAttempts?: number;
     readonly beforeWrite?: (attempt: number) => Promise<void>;
   };
+  /** 受付通知の署名と、管理者への通知のあて先・管理画面の URL（docs/design-docs/notifications.md「設定」） */
+  readonly mail?: MailSettings;
+  /**
+   * 受付通知と管理者への通知を送る部品（notifications.md「部品」）。省略したら送らない。
+   * 申込を保存したあとに送り、送れなくても申込の返事は変えない（mail.md「受付通知」）
+   */
+  readonly mailSender?: MailSender;
 }
 
 /** 申込の結果。受け付けたら返事（受付番号と見積額だけ）、受け付けなければ理由 */

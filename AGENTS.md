@@ -11,7 +11,8 @@
    - [docs/design-docs/reservation-model.md](docs/design-docs/reservation-model.md) — 予約のデータと状態の移り変わり（booking.md を予約のデータと操作の形に直したもの）
    - [docs/design-docs/dynamodb-keys.md](docs/design-docs/dynamodb-keys.md) — DynamoDB のキー設計（自律度「低」）
    - [docs/design-docs/admin-api.md](docs/design-docs/admin-api.md) — 管理 API の形（認証、一覧・詳細、操作、警告の確認、下書き）
-   - [docs/product-specs/mail.md](docs/product-specs/mail.md) — お客様へのメールの下書き（Gmail で送る。テンプレートの文面）
+   - [docs/product-specs/mail.md](docs/product-specs/mail.md) — お客様へのメールの下書き（Gmail で送る。テンプレートの文面）と、受付通知・管理者への通知の文面
+   - [docs/design-docs/notifications.md](docs/design-docs/notifications.md) — 受付通知と管理者への通知を送る部品の形（INV-6・INV-10）
 4. [docs/TECH_STACK.md](docs/TECH_STACK.md) — 技術スタックと選定理由
 5. [docs/TESTING.md](docs/TESTING.md) — テストの進め方。**テストを書く・実装する前に必読**
 6. [docs/exec-plans/](docs/exec-plans/) — 進行中の作業計画

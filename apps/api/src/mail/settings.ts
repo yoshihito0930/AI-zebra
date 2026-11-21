@@ -5,6 +5,10 @@
 export interface MailSettings {
   /** 担当者名（環境変数 MAIL_STAFF_NAME） */
   readonly staffName?: string;
-  /** 署名（環境変数 MAIL_SIGNATURE。改行は \n と書く） */
+  /** 署名（環境変数 MAIL_SIGNATURE。改行は \n と書く）。下書きと受付通知で使う */
   readonly signature?: string;
+  /** 管理者への新しい申込の通知のあて先（環境変数 MAIL_ADMIN_TO）。なければ送らない（notifications.md「設定」） */
+  readonly adminNotificationTo?: string;
+  /** 管理画面の URL（環境変数 ADMIN_APP_URL）。管理者への通知の、予約の詳細へのリンクに使う */
+  readonly adminAppUrl?: string;
 }
