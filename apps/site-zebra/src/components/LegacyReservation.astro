@@ -1,0 +1,123 @@
+---
+// 予約ページの今の仕組み（Googleカレンダーの埋め込みと、form.run の予約フォーム）。予約ウィジェットを有効にするまで出す
+// （src/booking-widget-flag.ts、docs/product-specs/index.md の「リリースの進め方」の手順2）。
+// 本文は今の HP（https://studiozebra-1st.com/reservation/）から、言い回しを変えずに写した。画像とページの外枠（メニュー・フッター）は写していない。
+// 写し方の決まり：
+// - 文字ではなく画像だった見出し（「RESERVATION」「contact」）は写さない。画像のボタンは、画像の説明の文字（ない・「RESERVATION」だけのものは、
+//   すぐ前の文の言葉）のリンクにした
+// - 康熙部首の文字（`⽇`〈U+2F47〉など。見た目は普通の漢字）は、普通の漢字に置き換えた（docs/harness-log.md）
+// - 連絡先（お問い合わせフォーム・LINE・メール・電話）は、ウィジェットを有効にしたあとも出すので、別の部品（StudioContacts）にした。
+//   電話番号はリポジトリに書かず、組み立てのときの環境変数 PUBLIC_STUDIO_TEL で渡す
+// - 色付きの強調（span）は strong にした。スマホ・PC だけの改行（br.sp・br.pc）は外した
+// 予約の決まり（docs/product-specs/booking.md）との食い違いは、今の仕組みの説明なので直さない。
+// 「ご予約についての注意事項」は、ウィジェットを有効にしたら出さない（予約受付の開始の前に、新しい予約の決まりに合わせて書き直す。
+// docs/product-specs/index.md の「リリースの進め方」の手順4）
+import StudioContacts from "./StudioContacts.astro";
+---
+
+<p>「<strong><a href="/policy/">利用規約</a></strong>」の内容をご確認のうえ、ご予約をお願いいたします。</p>
+
+<ol>
+  <li>
+    <p>
+      <strong>ご予約カレンダー</strong>で予約状況をご確認のうえ、<strong>ご予約フォーム</strong>よりお申し込みをお願いします。
+    </p>
+    <p>
+      <a href="#calendar">ご予約カレンダー</a>
+      <a href="https://form.run/@studiozebra-1st-reservation" target="_blank" rel="noopener">ご予約フォーム</a>
+    </p>
+  </li>
+  <li>
+    <p>
+      自動返信メールが届きましたら、受付担当者からの返信をお待ちください。<br />
+      <strong>受付担当者からの返信をもってご予約の受付完了となります。</strong><br />
+      （スタジオのメールアドレス：<a href="mailto:studiozebra1st@gmail.com">studiozebra1st@gmail.com</a>）<br />
+      ※6時間以内に返信がない場合はお手数ですがご連絡ください。<br />
+      ※20時以降にいただいたお申し込みにつきましては、翌日の正午までに返信いたします。
+    </p>
+  </li>
+  <li>
+    <ul>
+      <li>
+        仮予約にてお申し込みの場合は<br />
+        <strong>ご利用日の7日前までに予約確定のご連絡をお願いします。</strong>
+      </li>
+      <li>
+        本予約にてお申し込みの場合はその時点で<strong>予約確定</strong>となり<br />
+        同時にキャンセル料発生の対象となります。
+      </li>
+    </ul>
+  </li>
+</ol>
+
+<h2 id="calendar">カレンダーで予約状況を確認</h2>
+<p>
+  ご予約希望日に他の予約が入っている場合は、前後1時間以上あけてのご予約をお願いします。<br />
+  （リアルタイム更新ではありません）
+</p>
+<p>
+  <a
+    href="https://calendar.google.com/calendar/embed?src=studiozebra1st%40gmail.com&ctz=Asia%2FTokyo"
+    target="_blank"
+    rel="noopener">＞＞ページがうまく表示されない場合は、こちらをクリック！</a
+  >
+</p>
+<iframe
+  title="予約状況のカレンダー（Googleカレンダー）"
+  src="https://calendar.google.com/calendar/embed?height=590&wkst=1&bgcolor=%23ffffff&ctz=Asia%2FTokyo&src=c3R1ZGlvemVicmExc3RAZ21haWwuY29t&color=%23039BE5&showTitle=0&showTz=1&showNav=1"
+  style="border:solid 1px #777"
+  width="800"
+  height="590"></iframe>
+
+<h2>メールフォームでのご予約・お問合わせ</h2>
+<ul>
+  <li>
+    <a href="https://form.run/@studiozebra-1st-reservation" target="_blank" rel="noopener">ご予約フォームはこちら</a>
+  </li>
+</ul>
+<StudioContacts />
+
+<h2>ご予約についての注意事項</h2>
+<h3>仮予約につきまして</h3>
+<ul>
+  <li>仮予約は<strong>1日のご利用につき最大2日間</strong>まで承ります。</li>
+  <li>
+    仮予約にてお申し込みの場合、<strong>ご利用日の7日前の夕方6時までに</strong>予約確定のご連絡をお願いいたします。
+  </li>
+  <li>予約確定のご連絡がない場合はキャンセル扱いとなります。</li>
+  <li>
+    仮予約中に他の方から本予約のお申し込みがあった場合、状況をお伺いするためにご連絡させていただくことがあります。
+  </li>
+</ul>
+<h3>本予約につきまして</h3>
+<ul>
+  <li>
+    本予約にてお申し込みの場合はその時点で予約確定となり、同時に<strong>キャンセル料発生の対象となります。</strong>
+  </li>
+</ul>
+<h3>第２キープにつきまして</h3>
+<ul>
+  <li>他のお客様が仮予約をされている日時に「<strong>第２キープ</strong>」としてキャンセル待ちを承ることができます。</li>
+  <li>キャンセルの有無が判明した時点で当スタジオよりご連絡を差し上げます。</li>
+  <li>他のお客様が本予約をされている日時へのキャンセル待ちはできません。</li>
+</ul>
+<h3>キャンセル料の発生のタイミングと、キャンセル料のお支払いにつきまして</h3>
+<ul>
+  <li>
+    キャンセル料の発生のタイミングは下記の通りです。<br />
+    ・ご利用日の<strong>6日以前〜4日前</strong>までのキャンセル料はご予約時間分の<strong>利用料の50%</strong><br />
+    ・ご利用日の<strong>3日前〜前日</strong>までのキャンセル料はご予約時間分の<strong>利用料の80%</strong><br />
+    ・ご利用日<strong>当日</strong>のキャンセルはご予約時間分の<strong>利用料の100%</strong>
+  </li>
+  <li>ご予約当日にご来店が無い場合は、キャンセル料としてご予約時間分の利用料の100%をお支払いいただきます。</li>
+  <li>
+    キャンセル料のお支払いは、キャンセルより1週間以内に当スタジオにお越しいただき、現金およびクレジットカードにてお支払いいただくか、お振込にてお支払いいただきます。
+  </li>
+</ul>
+<h3>ロケハンにつきまして</h3>
+<ul>
+  <li>ロケハンのお問い合わせは、メールかお電話にてお願いします。</li>
+  <li>
+    ロケハンのご予約日に撮影のお申し込みがあった場合、ロケハン日時を変更していただくことがございますのであらかじめご了承ください。
+  </li>
+</ul>

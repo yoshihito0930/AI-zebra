@@ -9,6 +9,7 @@ import { createDynamoClient } from "./db/client.ts";
 import type { ReservationStore } from "./db/reservations.ts";
 import { createPublicApplicationRoute } from "./public/applications.ts";
 import { createPublicCalendarRoute } from "./public/calendar.ts";
+import type { MailSender } from "./mail/sender.ts";
 import type { MailSettings } from "./mail/settings.ts";
 
 /**
@@ -22,11 +23,13 @@ const now = (): DateTime => DateTime.now();
  * API の本体を組み立てる。読み書きするテーブルは引数で受け取る（テストからは DynamoDB Local のテーブルを渡せる）。
  * adminUserId は管理 API の管理者の id の取り出し方（本番は adminUserIdFromLambdaContext、手元は devAdminUserId）。
  * mail は下書きの文面に差し込む担当者名と署名（admin-api.md「担当者名と署名の設定」）
+ * mailSender は受付通知と管理者への通知を送る部品（notifications.md「部品」）。省略したら送らない
  */
 export function createApp(
   store: ReservationStore,
   adminUserId: AdminUserIdSource,
   mail?: MailSettings,
+  mailSender?: MailSender,
 ): Hono {
   const app = new Hono();
 
@@ -39,7 +42,13 @@ export function createApp(
   // 公開API（認証なし）：申込 POST /public/applications（booking.md「申込フォーム」。INV-3、INV-4）
   app.route(
     "/public",
-    createPublicApplicationRoute({ store, now, priceTable: currentPriceTable() }),
+    createPublicApplicationRoute({
+      store,
+      now,
+      priceTable: currentPriceTable(),
+      ...(mail === undefined ? {} : { mail }),
+      ...(mailSender === undefined ? {} : { mailSender }),
+    }),
   );
 
   // 管理 API（管理画面のスタッフだけ）：/admin/…（admin-api.md。管理者の id が取れなければ 401）

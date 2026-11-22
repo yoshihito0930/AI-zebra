@@ -4,3 +4,7 @@
 
 # docs/product-specs/index.md
 Googleカレンダーの取り込み（並行稼働のため）
+
+# docs/product-specs/mail.md
+受付通知
+管理者への新しい申込の通知
