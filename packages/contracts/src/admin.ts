@@ -197,28 +197,57 @@ export type AdminApproveRequest = z.infer<typeof AdminApproveRequest>;
 export const AdminEmptyRequest = z.strictObject({});
 export type AdminEmptyRequest = z.infer<typeof AdminEmptyRequest>;
 
+/**
+ * 操作の返事の下書きの id（admin-api.md「操作（1回目）」）。予約の id と組で下書きを指す（GET /admin/reservations/{id}/drafts/{draftId}）。
+ * API はいつも付ける。省略を許しているのは、付ける実装が入るまでのあいだ、今の返事が契約で通るようにするため
+ */
+const OperationDraftId = { draftId: z.string().min(1).optional() };
+
 /** 操作で作った下書き（reservation-model.md「状態と操作」）。下書きは送らない（INV-6） */
 const AdminOperationDraft = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("approval"),
     reservationId: z.string().min(1),
+    ...OperationDraftId,
     confirmedPrice: Yen,
   }),
-  z.strictObject({ kind: z.literal("rejection"), reservationId: z.string().min(1) }),
-  z.strictObject({ kind: z.literal("promotion"), reservationId: z.string().min(1) }),
-  z.strictObject({ kind: z.literal("second-hold-ended"), reservationId: z.string().min(1) }),
+  z.strictObject({
+    kind: z.literal("rejection"),
+    reservationId: z.string().min(1),
+    ...OperationDraftId,
+  }),
+  z.strictObject({
+    kind: z.literal("promotion"),
+    reservationId: z.string().min(1),
+    ...OperationDraftId,
+  }),
+  z.strictObject({
+    kind: z.literal("second-hold-ended"),
+    reservationId: z.string().min(1),
+    ...OperationDraftId,
+  }),
   z.strictObject({
     kind: z.literal("cancellation"),
     reservationId: z.string().min(1),
+    ...OperationDraftId,
     cancellationFee: CancellationFee,
   }),
   z.strictObject({
     kind: z.literal("move-up-notice"),
     reservationId: z.string().min(1),
+    ...OperationDraftId,
     remainingProvisionalIds: z.array(z.string().min(1)),
   }),
-  z.strictObject({ kind: z.literal("bring-forward-notice"), reservationId: z.string().min(1) }),
-  z.strictObject({ kind: z.literal("change"), reservationId: z.string().min(1) }),
+  z.strictObject({
+    kind: z.literal("bring-forward-notice"),
+    reservationId: z.string().min(1),
+    ...OperationDraftId,
+  }),
+  z.strictObject({
+    kind: z.literal("change"),
+    reservationId: z.string().min(1),
+    ...OperationDraftId,
+  }),
 ]);
 
 /** 操作が成功したときの返事：作った下書きの一覧 */
