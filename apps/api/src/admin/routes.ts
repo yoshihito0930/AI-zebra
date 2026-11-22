@@ -90,6 +90,7 @@ import {
   type ReservationOperationInput,
   type SaveOperationFailure,
   type SaveOperationOptions,
+  type SavedDraft,
   saveReservationOperation,
 } from "../db/operations.ts";
 import {
@@ -212,10 +213,7 @@ export function createAdminRoute(deps: AdminDeps): Hono {
         return rejected(c, errorOf(result.reason));
       }
       // 下書きは作るだけで送らない（INV-6。送るのは3回目の管理 API）
-      return c.json(
-        AdminOperationAccepted.parse({ drafts: result.drafts.map((saved) => saved.draft) }),
-        200,
-      );
+      return c.json(operationAccepted(result.drafts), 200);
     });
   }
 
@@ -262,10 +260,7 @@ export function createAdminRoute(deps: AdminDeps): Hono {
         : rejected(c, changeErrorOf(result.reason));
     }
     // 下書きは作るだけで送らない（INV-6）
-    return c.json(
-      AdminOperationAccepted.parse({ drafts: result.drafts.map((saved) => saved.draft) }),
-      200,
-    );
+    return c.json(operationAccepted(result.drafts), 200);
   });
 
   // 直接入力。経路は admin、バッファは初期値の60分（保存の層が決める）。不可の決まりと警告は、保存の層が同じ読んだデータで判定する
@@ -340,10 +335,7 @@ export function createAdminRoute(deps: AdminDeps): Hono {
     );
     if (!result.ok) return rejected(c, result.reason);
     // 今と同じバッファなら、何も書かずに空の一覧。下書きは作るだけで送らない（INV-6）
-    return c.json(
-      AdminOperationAccepted.parse({ drafts: result.drafts.map((saved) => saved.draft) }),
-      200,
-    );
+    return c.json(operationAccepted(result.drafts), 200);
   });
 
   // お客様の情報・撮影の内容の変更。どの状態の予約でも直せる（空き判定はしない）。全部の欄を送って置き換える
@@ -870,6 +862,18 @@ function toSnapshot(snapshot: HistorySnapshot) {
       : { provisionalIds: [...snapshot.provisionalIds] }),
     ...(snapshot.optionIds === undefined ? {} : { optionIds: [...snapshot.optionIds] }),
   };
+}
+
+// ---- 操作の返事（1回目・2回目a・2回目b） ----
+
+/**
+ * 操作が成功したときの返事：作った下書きの一覧（admin-api.md「操作（1回目）」）。どの下書きにも、3回目のルートと同じ形の
+ * 下書きの id（保存の層が書いた sk から作る）を付ける。あて先の予約の id と組で下書きを指す。下書きは作るだけで送らない（INV-6）
+ */
+function operationAccepted(drafts: readonly SavedDraft[]) {
+  return AdminOperationAccepted.parse({
+    drafts: drafts.map((saved) => ({ ...saved.draft, draftId: draftIdOf(saved.sk) })),
+  });
 }
 
 // ---- 下書き（3回目） ----

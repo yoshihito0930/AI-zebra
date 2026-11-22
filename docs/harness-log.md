@@ -247,3 +247,9 @@ AIを主軸にした開発の試行錯誤そのものを、ここに残す。
 - 足したもの：そのコミットを取り込む PR（#108）を出した。レビュー中の PR にコミットを足したら、「足したので、CI が通ってからマージしてほしい」と人間に伝える。マージのあとに、PR の最後のコミットが main に入っているかを確かめる
 - 次への改善：マージの結果を確かめる手順を、作業の終わりの確かめに入れる
 
+
+### 2026-11-22 操作の返事に draftId を付けると、前からある操作のテストが通らなくなった
+- 起きたこと：操作の返事の下書きに下書きの id（`draftId`）を付ける実装（admin-api.md「操作（1回目）」）で、PR #109 のテスト（`apps/api/src/admin/operation-draft-id.int.test.ts`）は通った。ところが、前からある操作のテスト（`routes.int.test.ts`・`routes-round2a.int.test.ts`・`routes-round2b.int.test.ts`・`cancel-after-start.int.test.ts`・`change-no-op.int.test.ts`）は、返事の下書きを `draftId` のない形と `toEqual`（`expect.arrayContaining` を含む）で比べていて、余計な `draftId` のために 72 件が通らなくなった。契約のテスト（`packages/contracts/src/admin.test.ts`・`admin-round2a.test.ts`）も `draftId` のない下書きが通ることを確かめているので、契約の `draftId` は必須にできない。実装担当はテストを直せないので、実装の PR は止めた
+- 足りなかったもの：手順（契約の欄を「省略を許す」から「いつも付ける」に変えるテストの PR で、前からある、返事をそのままの形で比べるテストも合わせて直すか、調べる手順がなかった）
+- 足したもの：この記録。実装の PR の本文に、通らないテストと直し方の案を書いた
+- 次への改善：返事に欄を足すテストの PR では、その返事を `toEqual` で比べている既存のテストを `grep` で探し、同じ PR で直す（TESTING.md の手順5の「テストを直す PR」と1つにできる）
