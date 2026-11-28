@@ -47,6 +47,8 @@ export interface MailSender {
 | `MAIL_ADMIN_TO` | 管理者への通知のあて先。なければ管理者への通知を送らない |
 | `ADMIN_APP_URL` | 管理画面の URL（例：手元なら `http://localhost:5174/`）。予約の詳細へのリンクは `{ADMIN_APP_URL}#/reservations/{予約の id}` |
 
+- どの変数も、ない・空・空白だけのときは「ない」と同じに扱う（`MAIL_STAFF_NAME`・`MAIL_SIGNATURE` と同じ。ユーザーの判断）
+- `ADMIN_APP_URL` の最後の `/` は、あってもなくてもよい。リンクは、最後の `/` をそろえてから `#/reservations/{予約の id}` を付ける（`http://localhost:5174` でも `http://localhost:5174/` でも `http://localhost:5174/#/reservations/{予約の id}`。ユーザーの判断）
 - リポジトリ（コード・テスト・README）には架空の値だけを書く。本番の値は、AWS の準備のときに Lambda の環境変数に入れる
 - SES の送信元のドメイン認証（DKIM）と、サンドボックスの解除は、AWS の準備のときに人間が行う（TECH_STACK.md「メールの送信元」）
 

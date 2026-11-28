@@ -372,8 +372,13 @@ describe("管理 API の契約：変更が成功したときの返事（AdminOpe
   it("変更の下書きと、第二キープへの繰り上げ案内：通す", () => {
     const value = {
       drafts: [
-        { kind: "change", reservationId: "res-kaku-1" },
-        { kind: "move-up-notice", reservationId: "res-kaku-2", remainingProvisionalIds: [] },
+        { kind: "change", reservationId: "res-kaku-1", draftId: "draft-kaku-1" },
+        {
+          kind: "move-up-notice",
+          reservationId: "res-kaku-2",
+          draftId: "draft-kaku-2",
+          remainingProvisionalIds: [],
+        },
       ],
     };
     expect(AdminOperationAccepted.safeParse(value).success).toBe(true);

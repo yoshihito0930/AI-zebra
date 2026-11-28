@@ -491,10 +491,19 @@ async function acceptedDrafts(res: Response): Promise<AdminOperationAccepted["dr
   return parsed.success ? parsed.data.drafts : [];
 }
 
-/** 下書きの並び順は決めていないので、件数と中身で比べる */
+/**
+ * 返事の下書きから、下書きの id（draftId）を除いたもの。種類・あて先・差し込む値だけを比べるため。
+ * draftId が付くことは operation-draft-id.int.test.ts で確かめる（admin-api.md「操作（1回目）」）
+ */
+function withoutDraftId(draft: unknown): unknown {
+  if (typeof draft !== "object" || draft === null) return draft;
+  return Object.fromEntries(Object.entries(draft).filter(([key]) => key !== "draftId"));
+}
+
+/** 下書きの並び順は決めていないので、件数と中身（下書きの id を除く）で比べる */
 function expectDrafts(actual: readonly unknown[], expected: readonly unknown[]): void {
   expect(actual).toHaveLength(expected.length);
-  expect(actual).toEqual(expect.arrayContaining([...expected]));
+  expect(actual.map(withoutDraftId)).toEqual(expect.arrayContaining([...expected]));
 }
 
 /** 直接入力が成功したときの返事が 201 と AdminDirectEntryAccepted であることを確かめ、予約の id を返す */

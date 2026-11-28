@@ -353,6 +353,15 @@ async function accepted(res: Response): Promise<AdminOperationAccepted> {
   return parsed.data;
 }
 
+/**
+ * 返事の下書きから、下書きの id（draftId）を除いたもの。種類・あて先・差し込む値だけを比べるため。
+ * draftId が付くことは operation-draft-id.int.test.ts で確かめる（admin-api.md「操作（1回目）」）
+ */
+function withoutDraftId(draft: unknown): unknown {
+  if (typeof draft !== "object" || draft === null) return draft;
+  return Object.fromEntries(Object.entries(draft).filter(([key]) => key !== "draftId"));
+}
+
 async function detailJson(id: string, now: DateTime): Promise<AdminReservationDetail> {
   const json = await okJson(await send("GET", `/admin/reservations/${id}`, undefined, now), 200);
   const parsed = AdminReservationDetail.safeParse(json);
@@ -445,7 +454,7 @@ async function expectChanged(
 ): Promise<AdminReservationDetail> {
   const historyBefore = (await detailJson(id, now)).history.length;
   const { drafts } = await accepted(await change(id, body, now));
-  expect(drafts).toEqual([{ kind: "change", reservationId: id }]);
+  expect(drafts.map(withoutDraftId)).toEqual([{ kind: "change", reservationId: id }]);
   const detail = await detailJson(id, now);
   expect(detail.history).toHaveLength(historyBefore + 1);
   const entry = detail.history.at(-1);
