@@ -388,17 +388,28 @@ describe("管理 API の契約：操作が成功したときの返事（AdminOpe
   it("1回目の操作で作る下書きの種類：通す", () => {
     const value = {
       drafts: [
-        { kind: "approval", reservationId: "res-kaku-1", confirmedPrice: 11_000 },
-        { kind: "rejection", reservationId: "res-kaku-1" },
-        { kind: "promotion", reservationId: "res-kaku-1" },
-        { kind: "second-hold-ended", reservationId: "res-kaku-2" },
+        {
+          kind: "approval",
+          reservationId: "res-kaku-1",
+          draftId: "draft-kaku-1",
+          confirmedPrice: 11_000,
+        },
+        { kind: "rejection", reservationId: "res-kaku-1", draftId: "draft-kaku-2" },
+        { kind: "promotion", reservationId: "res-kaku-1", draftId: "draft-kaku-3" },
+        { kind: "second-hold-ended", reservationId: "res-kaku-2", draftId: "draft-kaku-4" },
         {
           kind: "cancellation",
           reservationId: "res-kaku-1",
+          draftId: "draft-kaku-5",
           cancellationFee: { ratePercent: 80, fee: 22_000 },
         },
-        { kind: "move-up-notice", reservationId: "res-kaku-2", remainingProvisionalIds: [] },
-        { kind: "bring-forward-notice", reservationId: "res-kaku-3" },
+        {
+          kind: "move-up-notice",
+          reservationId: "res-kaku-2",
+          draftId: "draft-kaku-6",
+          remainingProvisionalIds: [],
+        },
+        { kind: "bring-forward-notice", reservationId: "res-kaku-3", draftId: "draft-kaku-7" },
       ],
     };
     expect(AdminOperationAccepted.safeParse(value).success).toBe(true);
