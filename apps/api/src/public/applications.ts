@@ -5,7 +5,10 @@
 // 受付番号はここで作り、予約と同じトランザクションで「まだないこと」を条件に保存する。
 // 番号が既存のものと重なったら、別の番号を作り直してやり直す（お客様の申込を断らない）。上限を超えたら busy。
 // 返事は契約（ApplicationAccepted／ApplicationRejected）を通してから返す。予約の id や状態は返さない（INV-3）。
-// ログは出さない（INV-10。お客様の情報を含む値を扱うため）。
+// 保存したあとに、受付通知と管理者への通知を順に送る（docs/design-docs/notifications.md「送る流れ」）。
+// 送れなくても申込の返事（201 と受付番号）は変えない。片方が送れなくても、もう片方は送る。
+// ログには、送れなかったメールのエラーの種類（receipt-mail-failed・admin-notification-failed）だけを出す。
+// それ以外のログは出さない（INV-10。お客様の情報を含む値を扱うため）。
 import { randomInt } from "node:crypto";
 import {
   checkApplicationDeadline,
@@ -31,7 +34,8 @@ import {
   type ShootingInfo,
   saveApplication,
 } from "../db/reservations.ts";
-import type { MailSender } from "../mail/sender.ts";
+import { renderAdminNotificationMail, renderReceiptMail } from "../mail/notification-mail.ts";
+import type { MailSender, OutgoingMail } from "../mail/sender.ts";
 import type { MailSettings } from "../mail/settings.ts";
 
 /** 申込の処理が使うもの。テストで固定・差し替えできるように、外から渡す */
@@ -153,6 +157,14 @@ export async function submitApplication(
       },
     );
     if (saved.ok) {
+      // 送り終えてから、受付番号を返す（mail.md「受付通知」）。送れなくても返事は変えない
+      await sendNotifications(deps, {
+        reservationId: saved.id,
+        receiptNumber,
+        request,
+        start,
+        end,
+      });
       return {
         ok: true,
         accepted: ApplicationAccepted.parse({
@@ -164,6 +176,61 @@ export async function submitApplication(
     if (saved.reason !== "receipt-number-taken") return rejected(saved.reason);
   }
   return rejected("busy");
+}
+
+/** 受付通知と管理者への通知に使う、保存した申込の値 */
+interface SavedApplication {
+  readonly reservationId: string;
+  readonly receiptNumber: string;
+  readonly request: ApplicationRequest;
+  readonly start: DateTime;
+  readonly end: DateTime;
+}
+
+/**
+ * 受付通知（あて先はフォームのメールアドレス）、管理者への通知（あて先は MAIL_ADMIN_TO。なければ送らない）の順に送る。
+ * 送る部品がなければ送らない。どちらも例外を外に出さず、エラーの種類だけをログに出す（INV-10。エラーの中身には
+ * あて先や本文が入りうるので出さない）。片方が送れなくても、もう片方は送る
+ */
+async function sendNotifications(deps: ApplicationDeps, saved: SavedApplication): Promise<void> {
+  const sender = deps.mailSender;
+  if (sender === undefined) return;
+
+  await sendOrLog(sender, "receipt-mail-failed", () => {
+    const mail = renderReceiptMail({
+      customerName: saved.request.customer.name,
+      receiptNumber: saved.receiptNumber,
+      kind: saved.request.kind,
+      start: saved.start,
+      end: saved.end,
+      signature: deps.mail?.signature,
+    });
+    return { kind: "receipt", to: saved.request.customer.email, ...mail };
+  });
+
+  const adminTo = deps.mail?.adminNotificationTo;
+  if (adminTo === undefined || adminTo.trim() === "") return;
+  await sendOrLog(sender, "admin-notification-failed", () => {
+    // お客様の情報は渡さない（INV-10）。予約の id と管理画面の URL だけ
+    const mail = renderAdminNotificationMail({
+      reservationId: saved.reservationId,
+      adminAppUrl: deps.mail?.adminAppUrl,
+    });
+    return { kind: "admin-new-application", to: adminTo, ...mail };
+  });
+}
+
+/** 文面を作って送る。作るときも送るときも、失敗したらエラーの種類だけをログに出して続ける */
+async function sendOrLog(
+  sender: MailSender,
+  failure: "receipt-mail-failed" | "admin-notification-failed",
+  build: () => OutgoingMail,
+): Promise<void> {
+  try {
+    await sender.send(build());
+  } catch {
+    console.error(failure);
+  }
 }
 
 /**

@@ -38,11 +38,15 @@
 | `DYNAMODB_ENDPOINT` | ローカルの DynamoDB の URL（`pnpm db:up` で起動したもの）。省略すると AWS の DynamoDB に接続する |
 | `DEV_ADMIN_USER_ID` | 管理 API（`/admin/…`）を、この id の管理者として動かす（Cognito なしで管理画面を作るため）。履歴の「誰が」になる。ない・空なら、管理 API はどれも 401。架空の id を使う |
 | `MAIL_STAFF_NAME` | お客様へのメールの下書きに差し込む担当者名（例：`架空 担当`）。ない・空なら「（担当者名）」と出す |
-| `MAIL_SIGNATURE` | 下書きの最後の署名。改行は `\n`（バックスラッシュと n の2文字）と書く（例：`スタジオ（架空）\nTEL 000-0000-0000`）。ない・空なら署名を出さない |
+| `MAIL_SIGNATURE` | 下書きと受付通知の最後の署名。改行は `\n`（バックスラッシュと n の2文字）と書く（例：`スタジオ（架空）\nTEL 000-0000-0000`）。ない・空なら署名を出さない |
+| `MAIL_ADMIN_TO` | 管理者への新しい申込の通知のあて先（例：`kaku.admin@example.com`）。ない・空なら管理者への通知を送らない |
+| `ADMIN_APP_URL` | 管理画面の URL（例：`http://localhost:5174/`）。管理者への通知の、予約の詳細へのリンク（`{ADMIN_APP_URL}#/reservations/{予約の id}`）に使う。最後の `/` はあってもなくてもよい。ない・空なら、リンクの代わりに「管理画面の承認待ちを確かめてください」と書く |
 
 `DEV_ADMIN_USER_ID` を読むのは手元の Node サーバー（`apps/api/src/server.ts`）だけ。本番（Lambda）は読まず、API Gateway の JWT オーソライザーが確かめたトークンの `sub` を使う（[docs/design-docs/admin-api.md](docs/design-docs/admin-api.md)「認証」）。
 
-`MAIL_STAFF_NAME`・`MAIL_SIGNATURE` は、手元の Node サーバーと本番（Lambda）の両方が読む（[docs/design-docs/admin-api.md](docs/design-docs/admin-api.md)「担当者名と署名の設定」）。本物の担当者名や電話番号はリポジトリに書かず、本番の値は Lambda の環境変数に入れる。
+`MAIL_STAFF_NAME`・`MAIL_SIGNATURE`・`MAIL_ADMIN_TO`・`ADMIN_APP_URL` は、手元の Node サーバーと本番（Lambda）の両方が読む（[docs/design-docs/admin-api.md](docs/design-docs/admin-api.md)「担当者名と署名の設定」、[docs/design-docs/notifications.md](docs/design-docs/notifications.md)「設定」）。本物の担当者名・電話番号・メールアドレスはリポジトリに書かず、本番の値は Lambda の環境変数に入れる。
+
+フォームからの申込を受け付けると、API は受付通知（お客様あて）と管理者への新しい申込の通知（`MAIL_ADMIN_TO` あて）を送る。手元の Node サーバーは送らずに、ターミナルに `メール（手元なので送らない）：種類=receipt あて先=あり` のように、メールの種類とあて先があるかだけを出す（件名・本文・あて先は出さない。INV-10）。本番（Lambda）は SES で送る。
 
 `pnpm db:up` で起動したローカルの DynamoDB は空なので、最初に `pnpm db:table` でテーブル（キー設計どおり。名前は既定で `zebra-local`）を作る。何度動かしてもよい（もうあれば作らない）。接続先が手元（localhost・127.0.0.1）でなければ作らない。ローカルの DynamoDB はデータをメモリにだけ置くので、`pnpm db:down` のあとはもう一度作る。
 
@@ -129,7 +133,7 @@ HP（apps/site-zebra）は、組み立て（`pnpm dev:site`・`pnpm build`）の
    pnpm db:up
    pnpm db:table
    pnpm db:demo
-   DEV_ADMIN_USER_ID=dev-admin MAIL_STAFF_NAME="架空 担当" DYNAMODB_TABLE_NAME=zebra-local DYNAMODB_ENDPOINT=http://localhost:8000 pnpm dev:api
+   DEV_ADMIN_USER_ID=dev-admin MAIL_STAFF_NAME="架空 担当" MAIL_ADMIN_TO=kaku.admin@example.com ADMIN_APP_URL=http://localhost:5174/ DYNAMODB_TABLE_NAME=zebra-local DYNAMODB_ENDPOINT=http://localhost:8000 pnpm dev:api
    ```
 
    `pnpm db:demo` は、動かした日の翌日から来月の末日までに、架空の予約とブロック枠を入れ、その一覧を表示する（受付番号もここに出る）。
@@ -141,7 +145,7 @@ HP（apps/site-zebra）は、組み立て（`pnpm dev:site`・`pnpm build`）の
 上から順に試すと、お客様の申込から管理者の操作までを一通り通せる。
 
 1. お客様の画面のカレンダーに、デモの予約が「仮予約」「本予約」「第二キープ」「予約不可」と時間だけで並ぶ（誰の予約か・金額は出ない。INV-3）。1日に4件以上ある日は「他○件」と出て、押すとその日の一覧が開く
-2. 空いている日を押し、申込フォームで本予約か仮予約を申込む（氏名・連絡先は架空のもの）。入力に応じて見積額が出て、受け付けると受付番号が出る
+2. 空いている日を押し、申込フォームで本予約か仮予約を申込む（氏名・連絡先は架空のもの）。入力に応じて見積額が出て、受け付けると受付番号が出る。ターミナル1には、受付通知と管理者への通知の2行（`種類=receipt`・`種類=admin-new-application`）が出る。手元ではメールを送らず、種類とあて先があるかだけを出す（`MAIL_ADMIN_TO` を付けなければ、管理者への通知の行は出ない）
 3. 管理画面の一覧で「承認待ちをすべて見る」を押すと、2の申込が出る。上の「受付番号から探す」に2の受付番号を入れても開ける
 4. 詳細で確定金額を入れて承認する。作った下書き（承認）の一覧が出て、「下書きを開く」から開ける（開くのは11で試す）
 5. 同じ予約を「直す」から延長する。見積が変わり、確定金額の初期値になる。締め切りなどの警告が出たら、確かめてから送り直す
