@@ -11,9 +11,9 @@
 
 | 役割 | 採用 | 理由 |
 |---|---|---|
-| HP | Astro（静的ビルド）→ S3 + CloudFront | 静的配信でほぼ無料。表示が速い |
+| HP | Astro（静的ビルド）。別のリポジトリ [zebra](https://github.com/yoshihito0930/zebra) で作り、検証用は `studiozebra-test.xyz`（配信のしかたは zebra の DEPLOY.md） | 静的配信でほぼ無料。表示が速い。ページとデザインの作業を、予約の仕組みと分けて進められる（ユーザーの判断） |
 | 管理画面 | React + Vite（SPA）→ S3 + CloudFront | 静的配信。利用者が少ないのでSSRは不要 |
-| 予約ウィジェット | React（HPに埋め込み） | 管理画面とコンポーネントを共有できる |
+| 予約ウィジェット | React。JavaScript の1つのファイルに組み立て、HP にスクリプト1行で載せる | 管理画面とコンポーネントを共有できる。HP のリポジトリと独立に更新できる（ユーザーの判断）。HP と API のオリジンが違うので、公開 API に CORS が要る |
 | API | Hono on Lambda（Node.js） | 同じアプリをローカルではNodeサーバー、本番ではLambdaとして動かせる |
 | APIの入口 | API Gateway HTTP API | REST APIより安い。JWT認証に対応 |
 | DB | DynamoDB（オンデマンド） | 使った分だけの課金。予約件数が少ないので安い |
