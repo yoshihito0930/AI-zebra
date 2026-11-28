@@ -4,10 +4,22 @@
 // - 強調の印（<赤>…</赤>、<青>…</青>、<下線>…</下線>）は、テキストでは外し、HTML では mail.md「強調の書き方」の span にする
 // - 差し込む値（{氏名} など）は、強調の印を読んだあとに置き換える（値の中の文字を印として読まない）。HTML ではエスケープする
 // - 日時はすべて JST で書く（INV-7。日時ライブラリは Luxon）。仮予約の期限は booking-core の provisionalDeadline で決める
+// - 日時の書き方・件名の終わり・差し込む値の置き換えは、受付通知と同じ部品（mail-format.ts）を使う
 import { provisionalDeadline } from "@zebra/booking-core";
 import type { ShootingType, Yen } from "@zebra/contracts";
 import type { DateTime } from "luxon";
 import type { z } from "zod";
+import {
+  durationText,
+  fillPlaceholders,
+  inJst,
+  pad2,
+  type PlaceholderValues,
+  reservationTimeText,
+  settingOf,
+  SUBJECT_SUFFIX,
+  weekdayOf,
+} from "./mail-format.ts";
 
 /** 撮影内容（スチール撮影・ムービー撮影・楽器の演奏を伴う撮影） */
 export type DraftMailShootingType = z.infer<typeof ShootingType>;
@@ -365,9 +377,6 @@ const PROMOTION: readonly string[] = FIRM_APPROVAL.map(
   (line) => PROMOTION_REPLACEMENTS.get(line) ?? line,
 );
 
-/** 件名はどれも「{予約日時}の…（スタジオゼブラ）」の形（mail.md「日時の書き方」） */
-const SUBJECT_SUFFIX = "（スタジオゼブラ）";
-
 interface Template {
   /** 件名の「{予約日時}の」に続く部分（「（スタジオゼブラ）」の前まで） */
   readonly subject: string;
@@ -488,8 +497,6 @@ function blockOf(line: string, input: DraftMailInput): readonly string[] | undef
 
 // ---- 差し込む値（mail.md「差し込む値」） ----
 
-const JST = "Asia/Tokyo";
-
 /** 担当者名の設定がないときに出す文字（管理者が Gmail で直す） */
 const STAFF_NAME_PLACEHOLDER = "（担当者名）";
 
@@ -500,10 +507,7 @@ const SHOOTING_TYPE_NAMES: readonly (readonly [DraftMailShootingType, string])[]
   ["music", "楽器の演奏を伴う撮影"],
 ];
 
-/** 曜日（Luxon の weekday は 1 が月曜、7 が日曜） */
-const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"] as const;
-
-type Values = ReadonlyMap<string, string>;
+type Values = PlaceholderValues;
 
 function valuesOf(input: DraftMailInput): Values {
   const { reservation, draft } = input;
@@ -527,58 +531,11 @@ function valuesOf(input: DraftMailInput): Values {
 }
 
 function staffNameOf(input: DraftMailInput): string {
-  return input.staffName === undefined || input.staffName === ""
-    ? STAFF_NAME_PLACEHOLDER
-    : input.staffName;
+  return settingOf(input.staffName) ?? STAFF_NAME_PLACEHOLDER;
 }
 
 function signatureOf(input: DraftMailInput): string | undefined {
-  return input.signature === undefined || input.signature === "" ? undefined : input.signature;
-}
-
-/** JST に直す（INV-7）。どのゾーンで渡しても同じ時点の JST */
-function inJst(dateTime: DateTime): DateTime {
-  const jst = dateTime.setZone(JST);
-  if (!jst.isValid) throw new RangeError("日時が不正");
-  return jst;
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-function weekdayOf(dateTime: DateTime): string {
-  const weekday = WEEKDAYS[dateTime.weekday - 1];
-  if (weekday === undefined) throw new RangeError("曜日が不正");
-  return weekday;
-}
-
-/** 時は0を付けず、分は2桁（「9時00分」） */
-function clockText(dateTime: DateTime): string {
-  return `${dateTime.hour}時${pad2(dateTime.minute)}分`;
-}
-
-/**
- * {予約日時}：「2026年10月20日(火) 15時00分〜17時00分」。
- * 終わりが開始の次の日（JST）なら、終わりの前に「翌」を付ける（0時ちょうどに終わるときも「翌0時00分」）
- */
-function reservationTimeText(start: DateTime, end: DateTime): string {
-  const s = inJst(start);
-  const e = inJst(end);
-  const nextDay = e.startOf("day").toMillis() > s.startOf("day").toMillis();
-  return (
-    `${s.year}年${s.month}月${s.day}日(${weekdayOf(s)}) ${clockText(s)}` +
-    `〜${nextDay ? "翌" : ""}${clockText(e)}`
-  );
-}
-
-/** {利用時間}：「2時間」「2時間30分」 */
-function durationText(start: DateTime, end: DateTime): string {
-  const minutes = Math.round((end.toMillis() - start.toMillis()) / 60_000);
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (hours === 0) return `${rest}分`;
-  return rest === 0 ? `${hours}時間` : `${hours}時間${rest}分`;
+  return settingOf(input.signature);
 }
 
 /** {仮予約の期限}：「10月13日(火)の18時」の形 */
@@ -644,9 +601,6 @@ const EMPHASIS_STYLES: Readonly<Record<Emphasis, string>> = {
 /** テンプレートの強調の印。印の中に印は入れない（mail.md のテンプレートにない） */
 const EMPHASIS_PATTERN = /<(赤|青|下線)>(.*?)<\/\1>/gu;
 
-/** 差し込む値の印 */
-const PLACEHOLDER_PATTERN = /\{([^{}]+)\}/gu;
-
 /**
  * テンプレートの1行を、強調の印で区切り、差し込む値を置き換える。強調の印はテンプレートの文字だけから読み、
  * 値を置き換えるのはそのあと（値の中の「<赤>」や「{氏名}」のような文字は、そのまま文字として出る）
@@ -672,15 +626,7 @@ function renderLine(line: string, values: Values): Segment[] {
   });
 }
 
-function fillPlaceholders(template: string, values: Values): string {
-  return template.replace(PLACEHOLDER_PATTERN, (_, name: string) => {
-    const value = values.get(name);
-    // テンプレートにある印は、どれも値を持つ（ない印はテンプレートの誤り）。印の名前だけを書き、値は書かない
-    if (value === undefined) throw new Error(`テンプレートの差し込む値がない（${name}）`);
-    return value;
-  });
-}
-
+/** 件名はどれも「{予約日時}の…（スタジオゼブラ）」の形（mail.md「日時の書き方」） */
 function renderSubject(subject: string, values: Values): string {
   return `${fillPlaceholders("{予約日時}の", values)}${subject}${SUBJECT_SUFFIX}`;
 }
