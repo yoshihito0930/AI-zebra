@@ -17,12 +17,12 @@
 5. [docs/TESTING.md](docs/TESTING.md) — テストの進め方。**テストを書く・実装する前に必読**
 6. [docs/exec-plans/](docs/exec-plans/) — 進行中の作業計画
 
-デザインの方向性（docs/DESIGN.md）は未決定。UIは決定まで最小限の見た目で実装する。
+HP（ページとデザイン）は別のリポジトリ [zebra](https://github.com/yoshihito0930/zebra)（`studio-website/astro`）で作る。このリポジトリは、予約 API・管理画面・HP に載せる予約ウィジェットを持つ。デザインの方向性は [docs/DESIGN.md](docs/DESIGN.md)（zebra の設計書を指す）。
 
 ## リポジトリ構成
 
 ```
-apps/site-zebra/          HP（Astro）
+apps/site-zebra/          予約ウィジェットを手元で試すページ（Astro。HP 本体は zebra リポジトリ）
 apps/admin/               管理画面（React + Vite）
 apps/api/                 予約API（Hono。ローカルは Node サーバー、本番は Lambda）
 packages/contracts/       公開APIのスキーマ（Zod）
